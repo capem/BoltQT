@@ -1,0 +1,231 @@
+from __future__ import annotations
+from typing import Optional, List, Callable, Any
+from difflib import SequenceMatcher
+from PyQt6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QLineEdit,
+    QListWidget,
+    QScrollBar,
+    QMenu,
+    QStyle,
+)
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+
+
+class FuzzySearchFrame(QWidget):
+    """Frame containing a fuzzy search entry and listbox."""
+    
+    # Signal emitted when a value is selected
+    value_selected = pyqtSignal()
+    
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        values: Optional[List[str]] = None,
+        search_threshold: int = 65,
+        identifier: Optional[str] = None,
+        on_tab: Optional[Callable[[Any], Optional[str]]] = None,
+    ) -> None:
+        super().__init__(parent)
+        
+        self.all_values = [str(v) for v in (values or []) if v is not None]
+        self.search_threshold = max(0, min(100, search_threshold))  # Clamp between 0 and 100
+        self.identifier = identifier or "unnamed"
+        self.on_tab_callback = on_tab
+        
+        # Setup UI
+        self._create_widgets()
+        self._setup_styles()
+        self._bind_events()
+        self._update_listbox()
+        
+        # Update timer for debouncing
+        self._update_timer = QTimer()
+        self._update_timer.setSingleShot(True)
+        self._update_timer.timeout.connect(self._update_listbox)
+    
+    def _create_widgets(self) -> None:
+        """Create and configure all child widgets."""
+        layout = QVBoxLayout()
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
+        self.setLayout(layout)
+        
+        # Entry widget with placeholder
+        self.entry = QLineEdit()
+        self.entry.setPlaceholderText("Type to search...")
+        layout.addWidget(self.entry)
+        
+        # Listbox
+        self.listbox = QListWidget()
+        self.listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.listbox.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        layout.addWidget(self.listbox)
+    
+    def _setup_styles(self) -> None:
+        """Configure styles for the widgets."""
+        self.entry.setStyleSheet("""
+            QLineEdit {
+                padding: 5px;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                font-family: 'Segoe UI';
+                font-size: 10pt;
+            }
+        """)
+        
+        self.listbox.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                background: white;
+                font-family: 'Segoe UI';
+                font-size: 10pt;
+            }
+            QListWidget::item {
+                padding: 5px;
+            }
+            QListWidget::item:selected {
+                background: #007bff;
+                color: white;
+            }
+            QListWidget::item:hover {
+                background: #e6f3ff;
+            }
+        """)
+    
+    def _bind_events(self) -> None:
+        """Bind event handlers to widgets."""
+        # Entry events
+        self.entry.textChanged.connect(self._on_text_changed)
+        self.entry.returnPressed.connect(self._select_top_match)
+        
+        # Listbox events
+        self.listbox.itemClicked.connect(self._on_select)
+        self.listbox.itemDoubleClicked.connect(self._on_select)
+        self.listbox.customContextMenuRequested.connect(self._show_context_menu)
+        
+        # Enable context menu for listbox
+        self.listbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    
+    def _on_text_changed(self) -> None:
+        """Handle text changes in the entry widget."""
+        # Restart the update timer
+        self._update_timer.start(100)  # 100ms debounce
+    
+    def _update_listbox(self) -> None:
+        """Update the listbox with intelligent fuzzy search results."""
+        current_value = self.get()
+        
+        # Clear current listbox
+        self.listbox.clear()
+        
+        # If empty, show all values
+        if not current_value:
+            self.listbox.addItems(self.all_values)
+            return
+        
+        try:
+            search_lower = current_value.lower()
+            scored_matches: List[tuple[float, str]] = []
+            
+            for value in self.all_values:
+                value_lower = value.lower()
+                
+                # Calculate ratio using SequenceMatcher
+                ratio = SequenceMatcher(None, search_lower, value_lower).ratio() * 100
+                
+                # Apply bonuses for special matches
+                if value_lower == search_lower:  # Exact match
+                    ratio = 100
+                elif value_lower.startswith(search_lower):  # Prefix match
+                    ratio = max(ratio, 90)
+                elif search_lower in value_lower:  # Contains match
+                    ratio = max(ratio, 80)
+                elif any(word.startswith(search_lower) for word in value_lower.split()):  # Word boundary match
+                    ratio = max(ratio, 75)
+                
+                # Only include matches that meet the threshold
+                if ratio >= self.search_threshold:
+                    scored_matches.append((ratio, value))
+            
+            # Sort by score (highest first) and add to listbox
+            scored_matches.sort(reverse=True, key=lambda x: x[0])
+            for _, value in scored_matches:
+                self.listbox.addItem(value)
+                
+        except Exception as e:
+            print(f"[DEBUG] Error in fuzzy search ({self.identifier}): {str(e)}")
+            # Fall back to simple contains matching
+            for value in self.all_values:
+                if current_value.lower() in value.lower():
+                    self.listbox.addItem(value)
+    
+    def _on_select(self) -> None:
+        """Handle selection in the listbox."""
+        current_item = self.listbox.currentItem()
+        if current_item:
+            value = current_item.text()
+            self.set(value)
+            self.value_selected.emit()
+    
+    def _select_top_match(self) -> None:
+        """Select the top match when Enter is pressed."""
+        if self.listbox.count() > 0:
+            value = self.listbox.item(0).text()
+            self.set(value)
+            self.value_selected.emit()
+    
+    def get(self) -> str:
+        """Get the current entry text."""
+        return self.entry.text()
+    
+    def set(self, value: str) -> None:
+        """Set the entry text."""
+        self.entry.setText(str(value))
+    
+    def set_values(self, values: Optional[List[str]]) -> None:
+        """Update the list of searchable values."""
+        self.all_values = [str(v) for v in (values or []) if v is not None]
+        current_value = self.get()
+        self.set(current_value)
+        self._update_listbox()
+    
+    def clear(self) -> None:
+        """Clear the entry text and listbox."""
+        self.entry.clear()
+        self.listbox.clear()
+    
+    def keyPressEvent(self, event) -> None:
+        """Handle key press events."""
+        if event.key() == Qt.Key.Key_Down and self.listbox.count() > 0:
+            # Move focus to listbox and select first item
+            self.listbox.setFocus()
+            self.listbox.setCurrentRow(0)
+        elif event.key() == Qt.Key.Key_Tab and self.on_tab_callback:
+            # Call parent's tab handler if provided
+            if self.on_tab_callback(event) == "break":
+                event.accept()
+                return
+        super().keyPressEvent(event)
+    
+    def _show_context_menu(self, pos) -> None:
+        """Show the context menu on right-click."""
+        item = self.listbox.itemAt(pos)
+        if not item:
+            return
+            
+        value = item.text()
+        if not value.startswith("✓ "):  # Only show menu for hyperlinked items
+            return
+            
+        menu = QMenu(self)
+        menu.addAction("Open Linked File", lambda: self._open_linked_file(value))
+        menu.exec(self.listbox.mapToGlobal(pos))
+    
+    def _open_linked_file(self, value: str) -> None:
+        """Open the linked file from the Excel hyperlink."""
+        # This will be implemented when we have access to the ProcessingTab
+        # and ExcelManager instances
+        pass
