@@ -1,26 +1,18 @@
 from __future__ import annotations
-from typing import Optional, Dict, List, Any, Callable
-from pathlib import Path
+from typing import Optional, Dict, Any, Callable
 from datetime import datetime
-import os
-import shutil
 import time
 
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
     QLabel,
     QPushButton,
-    QMessageBox,
-    QFileDialog,
     QFrame,
     QSplitter,
-    QGridLayout,
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 
-import pandas as pd
 from ..utils import ConfigManager, ExcelManager, PDFManager, PDFTask
 from .fuzzy_search import FuzzySearchFrame
 from .queue_display import QueueDisplay

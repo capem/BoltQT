@@ -55,7 +55,9 @@ class ConfigTab(QWidget):
         self._add_folder_section(container_layout)
         self._add_excel_section(container_layout)
         self._add_filter_section(container_layout)
+        self._add_template_section(container_layout)
         self._add_preset_section(container_layout)
+        self._add_save_section(container_layout)
         
         # Add stretch to bottom
         container_layout.addStretch()
@@ -154,6 +156,26 @@ class ConfigTab(QWidget):
             grid.addWidget(entry, i-1, 1)
         
         parent_layout.addWidget(frame)
+
+    def _add_template_section(self, parent_layout: QVBoxLayout) -> None:
+        """Add the output template configuration section."""
+        frame, layout = self._create_section_frame("Output Template Configuration")
+        
+        grid = QGridLayout()
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+        
+        # Template field
+        grid.addWidget(QLabel("Output Template:"), 0, 0)
+        self.output_template_entry = QLineEdit()
+        grid.addWidget(self.output_template_entry, 0, 1)
+        
+        # Help text
+        help_label = QLabel("Use ${field} for variable substitution, e.g. ${filter1}/${filter2}.pdf")
+        help_label.setStyleSheet("color: #666; font-style: italic;")
+        grid.addWidget(help_label, 1, 0, 1, 2)
+        
+        parent_layout.addWidget(frame)
     
     def _add_preset_section(self, parent_layout: QVBoxLayout) -> None:
         """Add the preset configuration section."""
@@ -185,6 +207,29 @@ class ConfigTab(QWidget):
         
         # Load presets
         self._load_presets()
+    
+    def _add_save_section(self, parent_layout: QVBoxLayout) -> None:
+        """Add the save configuration section."""
+        frame, layout = self._create_section_frame("")
+        
+        # Add save button
+        save_btn = QPushButton("Save Configuration")
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        save_btn.clicked.connect(self._save_config)
+        layout.addWidget(save_btn)
+        
+        parent_layout.addWidget(frame)
     
     def _browse_folder(self, key: str) -> None:
         """Open folder browser dialog."""
@@ -220,6 +265,7 @@ class ConfigTab(QWidget):
         self.processed_folder_entry.setText(config.get("processed_folder", ""))
         self.excel_file_entry.setText(config.get("excel_file", ""))
         self.excel_sheet_entry.setText(config.get("excel_sheet", ""))
+        self.output_template_entry.setText(config.get("output_template", ""))
         
         # Update filter entries
         for i, entry in enumerate(self.filter_entries, 1):
@@ -232,6 +278,7 @@ class ConfigTab(QWidget):
             "processed_folder": self.processed_folder_entry.text(),
             "excel_file": self.excel_file_entry.text(),
             "excel_sheet": self.excel_sheet_entry.text(),
+            "output_template": self.output_template_entry.text(),
         }
         
         # Add filter columns
@@ -239,6 +286,7 @@ class ConfigTab(QWidget):
             config[f"filter{i}_column"] = entry.text()
         
         self.config_manager.update_config(config)
+        self._update_status("Configuration saved successfully")
     
     def _on_config_change(self) -> None:
         """Handle configuration changes."""

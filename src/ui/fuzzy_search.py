@@ -6,9 +6,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QLineEdit,
     QListWidget,
-    QScrollBar,
     QMenu,
-    QStyle,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 

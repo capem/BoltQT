@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QFrame,
 )
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QTransform
+from PyQt6.QtGui import QPixmap, QImage, QTransform
 from PyQt6.QtCore import Qt, QSize
 import fitz  # PyMuPDF
 from ..utils.pdf_manager import PDFManager
