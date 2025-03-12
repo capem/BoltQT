@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
         # Create tabs
         self.config_tab = ConfigTab(
             self.config_manager,
+            self.excel_manager,
             handle_error,
             handle_status
         )

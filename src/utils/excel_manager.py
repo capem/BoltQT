@@ -5,7 +5,6 @@ import os
 import pandas as pd
 from openpyxl import load_workbook
 from PyQt6.QtCore import QObject
-
 class ExcelManager(QObject):
     """Manages Excel file operations and data caching."""
     
@@ -15,6 +14,20 @@ class ExcelManager(QObject):
         self._hyperlink_cache: Dict[int, bool] = {}
         self._last_cached_key: Optional[str] = None
         self._last_file: Optional[str] = None
+        self._last_sheet: Optional[str] = None
+        self._sheet_cache: Dict[str, list] = {}  # Cache for sheet names
+        self._column_cache: Dict[str, list] = {}  # Cache for column names
+
+    def clear_caches(self) -> None:
+        """Clear all cached data."""
+        self._hyperlink_cache.clear()
+        self._last_cached_key = None
+        self._last_file = None
+        self._last_sheet = None
+        self._sheet_cache.clear()
+        self._column_cache.clear()
+        self.excel_data = None
+        print("[DEBUG] All caches cleared")
         self._last_sheet: Optional[str] = None
     
     def load_excel_data(self, file_path: str, sheet_name: str) -> bool:
@@ -200,6 +213,68 @@ class ExcelManager(QObject):
             
         except Exception as e:
             print(f"[DEBUG] Error reverting PDF link: {str(e)}")
+            raise
+
+    def get_available_sheets(self, file_path: str) -> list[str]:
+        """Get list of available sheets in Excel file.
+        
+        Args:
+            file_path: Path to Excel file
+            
+        Returns:
+            List of sheet names
+        """
+        try:
+            # Check cache first
+            if file_path in self._sheet_cache:
+                return self._sheet_cache[file_path]
+            
+            # Load workbook
+            wb = load_workbook(file_path, read_only=True)
+            sheet_names = wb.sheetnames
+            
+            # Cache results
+            self._sheet_cache[file_path] = sheet_names
+            
+            return sheet_names
+            
+        except Exception as e:
+            print(f"[DEBUG] Error getting sheet names: {str(e)}")
+            raise
+            
+    def get_sheet_columns(self, file_path: str, sheet_name: str) -> list[str]:
+        """Get list of column names from specified sheet.
+        
+        Args:
+            file_path: Path to Excel file
+            sheet_name: Name of sheet to read
+            
+        Returns:
+            List of column names from first row
+        """
+        try:
+            # Generate cache key
+            cache_key = f"{file_path}:{sheet_name}"
+            
+            # Check cache first
+            if cache_key in self._column_cache:
+                return self._column_cache[cache_key]
+            
+            # Load workbook and get first row only
+            wb = load_workbook(file_path, read_only=True)
+            ws = wb[sheet_name]
+            
+            # Get header row values
+            header_row = next(ws.rows)
+            column_names = [cell.value for cell in header_row if cell.value]
+            
+            # Cache results
+            self._column_cache[cache_key] = column_names
+            
+            return column_names
+            
+        except Exception as e:
+            print(f"[DEBUG] Error getting column names: {str(e)}")
             raise
     
     def add_new_row(

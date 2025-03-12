@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, List
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -18,6 +18,7 @@ from PyQt6.QtCore import Qt
 import json
 import os
 from ..utils import ConfigManager
+from ..utils.excel_manager import ExcelManager
 
 class ConfigTab(QWidget):
     """Configuration tab for managing application settings."""
@@ -25,12 +26,14 @@ class ConfigTab(QWidget):
     def __init__(
         self,
         config_manager: ConfigManager,
+        excel_manager: ExcelManager,
         error_handler: Callable[[Exception, str], None],
         status_handler: Callable[[str], None],
     ) -> None:
         super().__init__()
         
         self.config_manager = config_manager
+        self.excel_manager = excel_manager
         self._handle_error = error_handler
         self._update_status = status_handler
         
@@ -134,8 +137,10 @@ class ConfigTab(QWidget):
         
         # Excel sheet
         grid.addWidget(QLabel("Sheet Name:"), 1, 0)
-        self.excel_sheet_entry = QLineEdit()
-        grid.addWidget(self.excel_sheet_entry, 1, 1)
+        self.excel_sheet_combo = QComboBox()
+        self.excel_sheet_combo.currentTextChanged.connect(self._on_sheet_changed)
+        self.excel_sheet_combo.setEnabled(False)  # Disabled until file selected
+        grid.addWidget(self.excel_sheet_combo, 1, 1)
         
         parent_layout.addWidget(frame)
     
@@ -148,14 +153,137 @@ class ConfigTab(QWidget):
         layout.addLayout(grid)
         
         # Filter columns
-        self.filter_entries = []
+        self.filter_combos: List[QComboBox] = []
         for i in range(1, 5):
             grid.addWidget(QLabel(f"Filter {i} Column:"), i-1, 0)
-            entry = QLineEdit()
-            self.filter_entries.append(entry)
-            grid.addWidget(entry, i-1, 1)
+            combo = QComboBox()
+            combo.setEnabled(False)  # Disabled until sheet selected
+            self.filter_combos.append(combo)
+            grid.addWidget(combo, i-1, 1)
         
         parent_layout.addWidget(frame)
+
+    def _on_sheet_changed(self, sheet_name: str) -> None:
+        """Handle sheet selection change."""
+        # Clear and disable filters if no sheet selected
+        if not sheet_name:
+            for combo in self.filter_combos:
+                combo.clear()
+                combo.setEnabled(False)
+            return
+            
+        try:
+            # Get current configuration to preserve filter values
+            config = self.config_manager.get_config()
+            stored_filter_values = [
+                config.get(f"filter{i}_column", "")
+                for i in range(1, len(self.filter_combos) + 1)
+            ]
+            
+            # Get column names from selected sheet
+            excel_file = self.excel_file_entry.text()
+            columns = self.excel_manager.get_sheet_columns(excel_file, sheet_name)
+            print(f"[DEBUG] Sheet changed to {sheet_name}, columns: {columns}")
+            
+            # Define default columns based on common names
+            default_columns = {
+                1: ['FOURNISSEURS', 'FRS', 'SUPPLIER'],  # Supplier column
+                2: ['FACTURES', 'FA', 'INVOICE'],        # Invoice column
+                3: ['DATE FACTURE', 'DATE', 'DATE FA'],  # Date column
+                4: ['MNT DH', 'MNT', 'MONTANT', 'AMOUNT'] # Amount column
+            }
+            
+            # Update filter combos with stored or default values
+            for i, (combo, stored_value) in enumerate(zip(self.filter_combos, stored_filter_values), 1):
+                combo.blockSignals(True)
+                try:
+                    combo.clear()
+                    combo.addItem("")  # Empty option
+                    combo.addItems(columns)
+                    combo.setEnabled(True)
+                    
+                    # First try stored value
+                    if stored_value and stored_value in columns:
+                        print(f"[DEBUG] Setting filter {i} to stored value: '{stored_value}'")
+                        combo.setCurrentText(stored_value)
+                    else:
+                        # Try to find a matching default column
+                        default_found = False
+                        if i in default_columns:
+                            for default_col in default_columns[i]:
+                                if default_col in columns:
+                                    print(f"[DEBUG] Setting filter {i} to default value: '{default_col}'")
+                                    combo.setCurrentText(default_col)
+                                    default_found = True
+                                    break
+                        
+                        if not default_found:
+                            print(f"[DEBUG] No matching value found for filter {i}")
+                            combo.setCurrentIndex(0)
+                finally:
+                    combo.blockSignals(False)
+                    
+            # Save configuration after setting defaults
+            self._save_config()
+            
+        except Exception as e:
+            print(f"[DEBUG] Error in sheet change: {str(e)}")
+            self._handle_error(e, "loading sheet columns")
+            # Disable filters on error
+            for combo in self.filter_combos:
+                combo.clear()
+                combo.setEnabled(False)
+            
+    def _browse_excel_file(self) -> None:
+        """Open file browser dialog for Excel files."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Excel File",
+            "",
+            "Excel Files (*.xlsx *.xls)"
+        )
+        if file_path:
+            try:
+                print(f"[DEBUG] Selected new Excel file: {file_path}")
+                
+                # Clear all caches first
+                self.excel_manager.clear_caches()
+                
+                # Update UI state
+                self.excel_sheet_combo.clear()
+                self.excel_sheet_combo.setEnabled(False)
+                for combo in self.filter_combos:
+                    combo.clear()
+                    combo.setEnabled(False)
+                
+                # Update file path and load sheets
+                self.excel_file_entry.setText(file_path)
+                sheets = self.excel_manager.get_available_sheets(file_path)
+                print(f"[DEBUG] Found sheets: {sheets}")
+                
+                if sheets:
+                    # Update sheet combo
+                    self.excel_sheet_combo.addItem("")
+                    self.excel_sheet_combo.addItems(sheets)
+                    self.excel_sheet_combo.setEnabled(True)
+                    self._update_status(f"Loaded Excel file: {os.path.basename(file_path)}")
+                else:
+                    self._update_status("No sheets found in Excel file")
+                
+                # Save configuration
+                self._save_config()
+                
+            except Exception as e:
+                print(f"[DEBUG] Error loading Excel file: {str(e)}")
+                self._handle_error(e, "loading Excel file")
+                
+                # Reset UI state on error
+                self.excel_manager.clear_caches()
+                self.excel_sheet_combo.clear()
+                self.excel_sheet_combo.setEnabled(False)
+                for combo in self.filter_combos:
+                    combo.clear()
+                    combo.setEnabled(False)
 
     def _add_template_section(self, parent_layout: QVBoxLayout) -> None:
         """Add the output template configuration section."""
@@ -244,17 +372,6 @@ class ConfigTab(QWidget):
             entry.setText(folder)
             self._save_config()
     
-    def _browse_excel_file(self) -> None:
-        """Open file browser dialog for Excel files."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Excel File",
-            "",
-            "Excel Files (*.xlsx *.xls)"
-        )
-        if file_path:
-            self.excel_file_entry.setText(file_path)
-            self._save_config()
     
     def _load_config(self) -> None:
         """Load configuration values into UI."""
@@ -264,12 +381,90 @@ class ConfigTab(QWidget):
         self.source_folder_entry.setText(config.get("source_folder", ""))
         self.processed_folder_entry.setText(config.get("processed_folder", ""))
         self.excel_file_entry.setText(config.get("excel_file", ""))
-        self.excel_sheet_entry.setText(config.get("excel_sheet", ""))
         self.output_template_entry.setText(config.get("output_template", ""))
         
-        # Update filter entries
-        for i, entry in enumerate(self.filter_entries, 1):
-            entry.setText(config.get(f"filter{i}_column", ""))
+        # Clear and disable combos initially
+        self.excel_sheet_combo.clear()
+        self.excel_sheet_combo.setEnabled(False)
+        for combo in self.filter_combos:
+            combo.clear()
+            combo.setEnabled(False)
+        
+        # Load Excel file data if available
+        excel_file = config.get("excel_file", "")
+        if excel_file and os.path.exists(excel_file):
+            try:
+                # Clear caches to ensure fresh data
+                self.excel_manager.clear_caches()
+                
+                # Load available sheets
+                sheets = self.excel_manager.get_available_sheets(excel_file)
+                
+                # Update sheet combo
+                self.excel_sheet_combo.addItem("")
+                self.excel_sheet_combo.addItems(sheets)
+                self.excel_sheet_combo.setEnabled(True)
+                
+                # Set selected sheet
+                sheet_name = config.get("excel_sheet", "")
+                if sheet_name in sheets:
+                    # Temporarily block signals to prevent triggering _on_sheet_changed
+                    self.excel_sheet_combo.blockSignals(True)
+                    self.excel_sheet_combo.setCurrentText(sheet_name)
+                    self.excel_sheet_combo.blockSignals(False)
+                    
+                    # Load column names
+                    try:
+                        columns = self.excel_manager.get_sheet_columns(excel_file, sheet_name)
+                        print(f"[DEBUG] Loaded columns: {columns}")
+                        
+                        # Define default columns based on common names
+                        default_columns = {
+                            1: ['FOURNISSEURS', 'FRS', 'SUPPLIER'],  # Supplier column
+                            2: ['FACTURES', 'FA', 'INVOICE'],        # Invoice column
+                            3: ['DATE FACTURE', 'DATE', 'DATE FA'],  # Date column
+                            4: ['MNT DH', 'MNT', 'MONTANT', 'AMOUNT'] # Amount column
+                        }
+                        
+                        # Update filter combos with columns and set values
+                        for i, combo in enumerate(self.filter_combos, 1):
+                            combo.blockSignals(True)
+                            try:
+                                combo.clear()
+                                combo.addItem("")  # Empty option first
+                                combo.addItems(columns)
+                                combo.setEnabled(True)
+                                
+                                # Try to set stored value first
+                                stored_value = config.get(f"filter{i}_column", "")
+                                print(f"[DEBUG] Filter {i} stored value: {stored_value}")
+                                
+                                if stored_value and stored_value in columns:
+                                    print(f"[DEBUG] Setting filter {i} to stored value: '{stored_value}'")
+                                    combo.setCurrentText(stored_value)
+                                else:
+                                    # If no stored value or invalid, try default values
+                                    default_found = False
+                                    if i in default_columns and not stored_value:
+                                        for default_col in default_columns[i]:
+                                            if default_col in columns:
+                                                print(f"[DEBUG] Setting filter {i} to default value: '{default_col}'")
+                                                combo.setCurrentText(default_col)
+                                                default_found = True
+                                                break
+                                    
+                                    if not default_found:
+                                        print(f"[DEBUG] No matching value found for filter {i}")
+                                        combo.setCurrentIndex(0)
+                            finally:
+                                combo.blockSignals(False)
+                                
+                    except Exception as e:
+                        print(f"[DEBUG] Error updating filter combos: {str(e)}")
+                        self._handle_error(e, "updating filter values")
+                
+            except Exception as e:
+                self._handle_error(e, "loading Excel configuration")
     
     def _save_config(self) -> None:
         """Save configuration values from UI."""
@@ -277,13 +472,13 @@ class ConfigTab(QWidget):
             "source_folder": self.source_folder_entry.text(),
             "processed_folder": self.processed_folder_entry.text(),
             "excel_file": self.excel_file_entry.text(),
-            "excel_sheet": self.excel_sheet_entry.text(),
+            "excel_sheet": self.excel_sheet_combo.currentText(),
             "output_template": self.output_template_entry.text(),
         }
         
         # Add filter columns
-        for i, entry in enumerate(self.filter_entries, 1):
-            config[f"filter{i}_column"] = entry.text()
+        for i, combo in enumerate(self.filter_combos, 1):
+            config[f"filter{i}_column"] = combo.currentText()
         
         self.config_manager.update_config(config)
         self._update_status("Configuration saved successfully")
