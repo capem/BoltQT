@@ -252,6 +252,8 @@ class ProcessingTab(QWidget):
                 identifier=f"processing_filter{i}",
                 on_tab=lambda e, idx=i-1: self._handle_filter_tab(e, idx)
             )
+            # Connect value_selected signal to update dependent filters
+            fuzzy.value_selected.connect(lambda idx=i-1: self._on_filter_selected(idx))
             layout.addWidget(fuzzy)
             
             # Add to main layout
@@ -261,7 +263,8 @@ class ProcessingTab(QWidget):
             self.filter_frames.append({
                 "frame": frame,
                 "label": label,
-                "fuzzy": fuzzy
+                "fuzzy": fuzzy,
+                "column": column
             })
             
             i += 1
@@ -271,10 +274,14 @@ class ProcessingTab(QWidget):
         
         # Load initial values for first filter
         if self.filter_frames:
-            self._load_filter_values()
+            self._load_filter_values(0)
     
-    def _load_filter_values(self) -> None:
-        """Load values for the first filter."""
+    def _load_filter_values(self, filter_index: int = 0) -> None:
+        """Load values for a specific filter.
+        
+        Args:
+            filter_index: Index of the filter to load values for (0-based)
+        """
         try:
             config = self.config_manager.get_config()
             if not (config["excel_file"] and config["excel_sheet"]):
@@ -287,16 +294,53 @@ class ProcessingTab(QWidget):
                     config["excel_sheet"]
                 )
             
-            # Get values for first filter
-            if self.filter_frames:
-                column = config["filter1_column"]
-                df = self.excel_manager.excel_data
-                values = sorted(df[column].astype(str).unique().tolist())
-                values = [str(x).strip() for x in values]
-                self.filter_frames[0]["fuzzy"].set_values(values)
+            # If we have no filters, exit
+            if not self.filter_frames or filter_index >= len(self.filter_frames):
+                return
+                
+            # Get the dataframe
+            df = self.excel_manager.excel_data
+            
+            # Apply filters for all previous filters
+            filtered_df = df.copy()
+            for i in range(filter_index):
+                # Skip if we don't have a value for this filter
+                selected_value = self.filter_frames[i]["fuzzy"].get()
+                if not selected_value:
+                    continue
+                    
+                # Apply filter
+                column = self.filter_frames[i]["column"]
+                filtered_df = filtered_df[filtered_df[column].astype(str) == selected_value]
+            
+            # Get values for the current filter
+            column = self.filter_frames[filter_index]["column"]
+            values = sorted(filtered_df[column].astype(str).unique().tolist())
+            values = [str(x).strip() for x in values]
+            self.filter_frames[filter_index]["fuzzy"].set_values(values)
                 
         except Exception as e:
-            self._handle_error(e, "loading filter values")
+            self._handle_error(e, f"loading filter values for filter {filter_index+1}")
+    
+    def _on_filter_selected(self, filter_index: int) -> None:
+        """Handle selection in a filter.
+        
+        Args:
+            filter_index: Index of the filter where selection occurred (0-based)
+        """
+        # Update process button state
+        self._update_process_button()
+        
+        # If this is the last filter, nothing to cascade
+        if filter_index >= len(self.filter_frames) - 1:
+            return
+            
+        # Clear all subsequent filters
+        for i in range(filter_index + 1, len(self.filter_frames)):
+            self.filter_frames[i]["fuzzy"].clear()
+        
+        # Update next filter's values
+        self._load_filter_values(filter_index + 1)
     
     def _handle_filter_tab(self, event: Any, filter_index: int) -> str:
         """Handle tab key in filter."""
