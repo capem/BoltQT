@@ -83,9 +83,22 @@ class PDFViewer(QWidget):
                 
                 # Accept the event to prevent further processing
                 return True
-        
-        return super().eventFilter(obj, event)
             
+            # Check if Shift key is pressed during wheel event for horizontal scrolling
+            elif wheel_event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                # Get the horizontal scroll bar
+                h_scrollbar = self.pdf_view.horizontalScrollBar()
+                if h_scrollbar and h_scrollbar.isVisible():
+                    # Calculate scroll amount based on delta
+                    delta = wheel_event.angleDelta().y()
+                    # Use negative delta to match natural scroll direction
+                    scroll_amount = -delta / 120 * 20  # Adjust scrolling speed
+                    # Apply horizontal scrolling
+                    h_scrollbar.setValue(h_scrollbar.value() + int(scroll_amount))
+                    
+                    # Accept the event to prevent further processing
+                    return True
+        
         # Let the base class handle the event
         return super().eventFilter(obj, event)
     
