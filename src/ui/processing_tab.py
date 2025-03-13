@@ -164,6 +164,16 @@ class ProcessingTab(QWidget):
         self.process_button = QPushButton("Process File")
         self.process_button.clicked.connect(self._process_current_file)
         self.process_button.setEnabled(False)
+        # Make the process button the default button so it responds to Enter key press
+        self.process_button.setDefault(True)
+        self.process_button.setAutoDefault(True)
+        # Add focus style
+        self.process_button.setStyleSheet("""
+            QPushButton:focus {
+                background-color: #cce4ff;
+                border: 2px solid #007bff;
+            }
+        """)
         actions_layout.addWidget(self.process_button)
         
         # Skip button
@@ -345,9 +355,12 @@ class ProcessingTab(QWidget):
     def _handle_filter_tab(self, event: Any, filter_index: int) -> str:
         """Handle tab key in filter."""
         if filter_index < len(self.filter_frames) - 1:
+            # Move to next filter
             self.filter_frames[filter_index + 1]["fuzzy"].entry.setFocus()
         else:
+            # Move to process button and visually highlight it
             self.process_button.setFocus()
+            # The button will be highlighted by the focus style in Qt
         return "break"
     
     def _process_current_file(self) -> None:

@@ -104,6 +104,9 @@ class FuzzySearchFrame(QWidget):
         self.listbox.itemDoubleClicked.connect(self._on_select)
         self.listbox.customContextMenuRequested.connect(self._show_context_menu)
         
+        # Make listbox properly handle tab/enter keys
+        self.listbox.installEventFilter(self)
+        
         # Enable context menu for listbox
         self.listbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
     
@@ -201,11 +204,22 @@ class FuzzySearchFrame(QWidget):
             # Move focus to listbox and select first item
             self.listbox.setFocus()
             self.listbox.setCurrentRow(0)
-        elif event.key() == Qt.Key.Key_Tab and self.on_tab_callback:
-            # Call parent's tab handler if provided
-            if self.on_tab_callback(event) == "break":
-                event.accept()
-                return
+        elif event.key() == Qt.Key.Key_Enter or event.key() == Qt.Key.Key_Return:
+            # Select the top match but stay in this filter
+            self._select_top_match()
+            # Keep focus on this input
+            self.entry.setFocus()
+            event.accept()
+            return
+        elif event.key() == Qt.Key.Key_Tab and self.listbox.count() > 0:
+            # Select the top match first
+            self._select_top_match()
+            # If tab handler is provided, call it to move focus
+            if self.on_tab_callback:
+                if self.on_tab_callback(event) == "break":
+                    event.accept()
+                    return
+        
         super().keyPressEvent(event)
     
     def _show_context_menu(self, pos) -> None:
@@ -227,3 +241,32 @@ class FuzzySearchFrame(QWidget):
         # This will be implemented when we have access to the ProcessingTab
         # and ExcelManager instances
         pass
+    
+    def eventFilter(self, obj, event) -> bool:
+        """Filter events for the listbox."""
+        if obj == self.listbox and event.type() == event.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Tab:
+                # Select the current item
+                current_item = self.listbox.currentItem()
+                if current_item:
+                    value = current_item.text()
+                    self.set(value)
+                    self.value_selected.emit()
+                
+                # If tab handler is provided, call it to move focus
+                if self.on_tab_callback:
+                    if self.on_tab_callback(event) == "break":
+                        return True
+            
+            elif event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+                # Select the current item
+                current_item = self.listbox.currentItem()
+                if current_item:
+                    value = current_item.text()
+                    self.set(value)
+                    self.value_selected.emit()
+                    # Return focus to the entry
+                    self.entry.setFocus()
+                    return True
+        
+        return super().eventFilter(obj, event)
