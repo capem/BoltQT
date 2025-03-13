@@ -4,16 +4,14 @@ from PyQt6.QtWidgets import (
     QWidget,
     QLabel,
     QVBoxLayout,
-    QScrollArea,
-    QFrame,
 )
-from PyQt6.QtGui import QPixmap, QImage, QTransform
-from PyQt6.QtCore import Qt, QSize
-import fitz  # PyMuPDF
+from PyQt6.QtPdf import QPdfDocument
+from PyQt6.QtPdfWidgets import QPdfPageSelector, QPdfView
+from PyQt6.QtCore import Qt, QEvent
 from ..utils.pdf_manager import PDFManager
 
-class PDFViewer(QScrollArea):
-    """Widget for displaying PDF pages."""
+class PDFViewer(QWidget):
+    """Widget for displaying PDF pages using QPdfView."""
     
     # Zoom levels (percentages)
     ZOOM_LEVELS = [25, 50, 75, 100, 125, 150, 175, 200]
@@ -22,36 +20,43 @@ class PDFViewer(QScrollArea):
         super().__init__(parent)
         
         self.pdf_manager = pdf_manager
-        self.current_image: Optional[QPixmap] = None
         self.current_pdf: Optional[str] = None
         self.zoom_level: float = 1.0
         
-        # Create display widget
-        self.display_widget = QLabel()
-        self.display_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.display_widget.setMinimumSize(QSize(200, 200))
+        # Create PDF document object
+        self.pdf_document = QPdfDocument(self)
+        
+        # Create PDF viewer widget
+        self.pdf_view = QPdfView(self)
+        self.pdf_view.setDocument(self.pdf_document)
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
+        self.pdf_view.setZoomFactor(self.zoom_level)
+        
+        # Set the document view mode to display all pages vertically with scroll bar
+        self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
+        
+        # Enable viewport events for the PDF view to allow wheel events
+        self.pdf_view.viewport().setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+        self.pdf_view.viewport().installEventFilter(self)
         
         # Create loading label
         self.loading_label = QLabel("Loading...")
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.loading_label.hide()
         
-        # Create container widget
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.addWidget(self.display_widget)
-        layout.addWidget(self.loading_label)
+        # Create page selector
+        self.page_selector = QPdfPageSelector(self)
+        self.page_selector.setDocument(self.pdf_document)
         
-        # Configure scroll area
-        self.setWidget(container)
-        self.setWidgetResizable(True)
-        self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Create layout
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.pdf_view)
+        layout.addWidget(self.loading_label)
+        layout.addWidget(self.page_selector)
         
         # Set stylesheet
         self.setStyleSheet("""
-            QScrollArea {
+            QWidget {
                 background: white;
                 border: 1px solid #ccc;
                 border-radius: 5px;
@@ -61,6 +66,28 @@ class PDFViewer(QScrollArea):
                 font-size: 12pt;
             }
         """)
+    
+    def eventFilter(self, obj, event):
+        """Handle events for child widgets."""
+        if obj is self.pdf_view.viewport() and event.type() == QEvent.Type.Wheel:
+            # Directly access the wheel event properties
+            wheel_event = event  # The event is already a QWheelEvent
+            
+            # Check if Ctrl key is pressed during wheel event
+            if wheel_event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                delta = wheel_event.angleDelta().y()
+                if delta > 0:
+                    self.zoom_in()
+                elif delta < 0:
+                    self.zoom_out()
+                
+                # Accept the event to prevent further processing
+                return True
+        
+        return super().eventFilter(obj, event)
+            
+        # Let the base class handle the event
+        return super().eventFilter(obj, event)
     
     def display_pdf(
         self,
@@ -77,8 +104,7 @@ class PDFViewer(QScrollArea):
         """
         try:
             # Clear current display
-            self.display_widget.clear()
-            self.current_image = None
+            self.pdf_document.close()
             self.current_pdf = None
             
             if not pdf_path:
@@ -92,53 +118,27 @@ class PDFViewer(QScrollArea):
             # Update zoom level if provided
             if zoom is not None:
                 self.zoom_level = zoom
+                self.pdf_view.setZoomFactor(self.zoom_level)
             
-            # Open the PDF
+            # Open the PDF using PDF manager to track it
             if not self.pdf_manager.open_pdf(pdf_path):
                 raise RuntimeError("Failed to open PDF")
             
-            # Get the first page
-            page = self.pdf_manager.get_current_page()
-            if not page:
-                raise RuntimeError("Failed to get PDF page")
+            # Load the document in QPdfView
+            self.pdf_document.load(pdf_path)
             
-            # Calculate zoom and rotation
-            zoom_matrix = fitz.Matrix(self.zoom_level, self.zoom_level)
-            rotation = self.pdf_manager.get_rotation()
-            if rotation:
-                zoom_matrix = zoom_matrix * fitz.Matrix(rotation)
-            
-            # Render page to pixmap
-            pix = page.get_pixmap(matrix=zoom_matrix)
-            
-            # Convert to QImage
-            img = QImage(
-                pix.samples,
-                pix.width,
-                pix.height,
-                pix.stride,
-                QImage.Format.Format_RGB888
-            )
-            
-            # Convert to QPixmap and apply rotation
-            pixmap = QPixmap.fromImage(img)
-            if rotation:
-                transform = QTransform()
-                transform.rotate(rotation)
-                pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-            
-            # Update display
-            self.current_image = pixmap
+            # Update current PDF path
             self.current_pdf = pdf_path
-            self.display_widget.setPixmap(pixmap)
             
         except Exception as e:
             print(f"[DEBUG] Error displaying PDF: {str(e)}")
-            self.display_widget.setText(f"Error displaying PDF:\n{str(e)}")
+            self.loading_label.setText(f"Error displaying PDF:\n{str(e)}")
+            self.loading_label.show()
             
         finally:
-            # Hide loading label
-            self.loading_label.hide()
+            # Hide loading label if it was shown
+            if show_loading:
+                self.loading_label.hide()
     
     def zoom_in(self) -> None:
         """Zoom in to the next zoom level."""
@@ -146,7 +146,7 @@ class PDFViewer(QScrollArea):
         for level in self.ZOOM_LEVELS:
             if level > current_percent:
                 self.zoom_level = level / 100
-                self.display_pdf(self.current_pdf, show_loading=False)
+                self.pdf_view.setZoomFactor(self.zoom_level)
                 break
     
     def zoom_out(self) -> None:
@@ -155,14 +155,10 @@ class PDFViewer(QScrollArea):
         for level in reversed(self.ZOOM_LEVELS):
             if level < current_percent:
                 self.zoom_level = level / 100
-                self.display_pdf(self.current_pdf, show_loading=False)
+                self.pdf_view.setZoomFactor(self.zoom_level)
                 break
     
     def get_visible_rect(self) -> Tuple[int, int, int, int]:
-        """Get the currently visible rectangle in the scroll area."""
-        return (
-            self.horizontalScrollBar().value(),
-            self.verticalScrollBar().value(),
-            self.viewport().width(),
-            self.viewport().height()
-        )
+        """Get the currently visible rectangle in the viewer."""
+        viewport = self.pdf_view.viewport()
+        return (0, 0, viewport.width(), viewport.height())
