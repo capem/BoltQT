@@ -2,6 +2,8 @@ from __future__ import annotations
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime
 import time
+import pandas as pd
+import os
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -10,6 +12,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QFrame,
     QSplitter,
+    QApplication
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 
@@ -29,6 +32,13 @@ class ProcessingThread(QThread):
         super().__init__(parent)
         self.tasks: Dict[str, PDFTask] = {}
         self.running = True
+        # Cache for Excel data to avoid reloading for every task
+        self._excel_data_cache = {
+            'file': None,
+            'sheet': None,
+            'data': None,
+            'columns': None
+        }
     
     def run(self) -> None:
         """Process tasks in the queue."""
@@ -49,14 +59,424 @@ class ProcessingThread(QThread):
                 continue
             
             try:
-                # Process task here
-                # This will be implemented when we add the task processing logic
-                pass
+                print(f"[DEBUG] Processing task {task_id}: {task_to_process.pdf_path}")
+                
+                # Access the config manager and other required components
+                parent = self.parent()
+                if not parent or not hasattr(parent, 'config_manager'):
+                    raise Exception("Could not access configuration")
+                    
+                config = parent.config_manager.get_config()
+                excel_manager = parent.excel_manager
+                pdf_manager = parent.pdf_manager
+                
+                # Verify required configuration
+                required_configs = ["processed_folder", "output_template", "excel_file", "excel_sheet"]
+                missing_configs = [cfg for cfg in required_configs if not config.get(cfg)]
+                if missing_configs:
+                    raise Exception(f"Missing required configuration: {', '.join(missing_configs)}")
+                
+                # Load Excel data with caching for efficiency
+                self._ensure_excel_data_loaded(excel_manager, config)
+                df = self._excel_data_cache['data']
+                
+                # Get filter columns based on number of filter values
+                filter_columns = self._get_filter_columns(config, task_to_process.filter_values)
+                
+                # Make a copy of filter values to avoid modifying the original
+                filter_values = task_to_process.filter_values.copy()
+                
+                # Find row index efficiently
+                try:
+                    row_idx = self._find_matching_row(df, filter_columns, filter_values)
+                except Exception as e:
+                    print(f"[DEBUG] Error finding matching row: {str(e)}")
+                    raise Exception(f"Could not find matching Excel row: {str(e)}")
+                
+                # Update task with the row index
+                task_to_process.row_idx = row_idx
+                
+                # Extract and validate row data
+                row_data = df.iloc[row_idx]
+                try:
+                    self._validate_row_data(row_data, filter_columns, filter_values)
+                except Exception as e:
+                    print(f"[DEBUG] Row data validation error: {str(e)}")
+                    raise Exception(f"Row data validation failed: {str(e)}")
+                
+                # Create template data from row data efficiently
+                template_data = self._create_template_data(row_data, filter_columns, filter_values)
+                
+                # Add processed_folder to template data
+                template_data["processed_folder"] = config["processed_folder"]
+                
+                # Process steps with individual try-except blocks to allow partial success
+                
+                # Step 1: Generate output path
+                processed_path = None
+                try:
+                    processed_path = pdf_manager.generate_output_path(
+                        config["output_template"], 
+                        template_data
+                    )
+                    print(f"[DEBUG] Step 1 - Generated output path: {processed_path}")
+                except Exception as e:
+                    print(f"[DEBUG] Error generating output path: {str(e)}")
+                    raise Exception(f"Failed to generate output path: {str(e)}")
+                
+                # Step 2: Update Excel hyperlink
+                try:
+                    original_link = self._update_excel_hyperlink(
+                        excel_manager, 
+                        config, 
+                        row_idx, 
+                        processed_path,
+                        filter_columns[1] if len(filter_columns) > 1 else None,
+                        task_to_process
+                    )
+                    print(f"[DEBUG] Step 2 - Updated Excel hyperlink, original: {original_link}")
+                except Exception as e:
+                    print(f"[DEBUG] Warning - Excel hyperlink update failed: {str(e)}")
+                    # Continue even if hyperlink update fails
+                
+                # Step 3: Process the PDF
+                try:
+                    pdf_manager.process_pdf(
+                        task=task_to_process,
+                        template_data=template_data,
+                        processed_folder=config["processed_folder"],
+                        output_template=config["output_template"]
+                    )
+                    print(f"[DEBUG] Step 3 - PDF processed successfully")
+                    
+                    # Set completed status before emitting signal
+                    task_to_process.status = "completed"
+                    task_to_process.end_time = datetime.now()
+                    
+                    # Task completed successfully
+                    self.task_completed.emit(task_id, "completed")
+                    print(f"[DEBUG] Task {task_id} completed successfully")
+                    
+                except Exception as e:
+                    print(f"[DEBUG] Error processing PDF: {str(e)}")
+                    raise Exception(f"PDF processing failed: {str(e)}")
                 
             except Exception as e:
-                self.task_failed.emit(task_id, str(e))
+                error_msg = str(e)
+                print(f"[DEBUG] Task processing error: {error_msg}")
+                
+                # Update task status before emitting signal
+                if task_id in self.tasks:
+                    self.tasks[task_id].status = "failed"
+                    self.tasks[task_id].error_msg = error_msg
+                    self.tasks[task_id].end_time = datetime.now()
+                
+                # Emit failure signal with the actual error message
+                self.task_failed.emit(task_id, error_msg)
+                print(f"[DEBUG] Task {task_id} failed: {error_msg}")
+                
+            finally:
+                # Small delay to prevent CPU overuse
+                time.sleep(0.05)  # Reduced from 0.1 for better throughput
+    
+    def _ensure_excel_data_loaded(self, excel_manager, config):
+        """Ensure Excel data is loaded, using cache if possible."""
+        excel_file = config["excel_file"]
+        excel_sheet = config["excel_sheet"]
+        
+        # Check if we need to reload the data
+        if (self._excel_data_cache['file'] != excel_file or 
+            self._excel_data_cache['sheet'] != excel_sheet or
+            self._excel_data_cache['data'] is None):
+            
+            # Load new data
+            excel_manager.load_excel_data(excel_file, excel_sheet)
+            
+            # Update cache
+            self._excel_data_cache['file'] = excel_file
+            self._excel_data_cache['sheet'] = excel_sheet
+            self._excel_data_cache['data'] = excel_manager.excel_data
+            # Pre-convert all string columns to strings to avoid repeated conversions
+            for col in self._excel_data_cache['data'].select_dtypes(exclude=['datetime64']):
+                self._excel_data_cache['data'][col] = self._excel_data_cache['data'][col].astype(str)
+    
+    def _get_filter_columns(self, config, filter_values):
+        """Get filter columns based on filter values."""
+        filter_columns = []
+        for i in range(1, len(filter_values) + 1):
+            column_key = f"filter{i}_column"
+            if column_key not in config:
+                raise Exception(f"Missing filter column configuration for filter {i}")
+            filter_columns.append(config[column_key])
+        return filter_columns
+    
+    def _find_matching_row(self, df, filter_columns, filter_values):
+        """Find the matching row in Excel data based on filter values."""
+        if len(filter_values) < 2 or len(filter_columns) < 2:
+            raise Exception("At least two filter values are required")
+        
+        # Get filter2 value - if it has Excel row info, extract it
+        filter2_value = filter_values[1]
+        parent = self.parent()
+        row_idx = -1
+        
+        # If filter2 value contains the Excel row marker, parse it
+        if isinstance(filter2_value, str) and "⟨Excel Row:" in filter2_value:
+            print(f"[DEBUG] Parsing filter2 value with row info: {filter2_value}")
+            
+            # If parent exists and has the parse method, use it to extract row info
+            if parent and hasattr(parent, '_parse_filter2_value'):
+                # Parse filter2 value to extract clean value and row index
+                clean_value, extracted_row_idx = parent._parse_filter2_value(filter2_value)
+                if extracted_row_idx >= 0:
+                    # Use the row index from the formatted value
+                    print(f"[DEBUG] Using extracted row index: {extracted_row_idx}")
+                    row_idx = extracted_row_idx
+                    filter2_value = clean_value
+                    filter_values[1] = clean_value  # Replace with clean value for further processing
+        else:
+            print(f"[DEBUG] Using direct filter2 value (no row info): {filter2_value}")
+        
+        # If we already have a valid row index from the formatted value, verify it
+        if row_idx >= 0:
+            # Verify that the row contains the expected filter2 value
+            if row_idx < len(df):
+                filter2_column = filter_columns[1]
+                actual_value = str(df.iloc[row_idx][filter2_column])
+                if actual_value == filter2_value:
+                    print(f"[DEBUG] Found matching row at index {row_idx} with value {filter2_value}")
+                    return row_idx
+                else:
+                    print(f"[DEBUG] Row index {row_idx} does not match filter2 value. Expected: {filter2_value}, Got: {actual_value}")
             else:
-                self.task_completed.emit(task_id, "completed")
+                print(f"[DEBUG] Row index {row_idx} is out of bounds (df length: {len(df)})")
+        
+        # Fallback: search for matching rows using filter2 value
+        filter2_column = filter_columns[1]
+        print(f"[DEBUG] Searching for rows with filter2 value: '{filter2_value}' in column '{filter2_column}'")
+        
+        # Use vectorized operations for better performance
+        matching_mask = df[filter2_column].astype(str) == filter2_value
+        matching_rows = df[matching_mask]
+        
+        matching_count = len(matching_rows)
+        print(f"[DEBUG] Found {matching_count} matching rows for filter2 value")
+        
+        if matching_count == 0:
+            raise Exception(f"Could not find Excel row matching filter value: {filter2_value}")
+            
+        if matching_count == 1:
+            # Found exactly one match
+            row_idx = matching_rows.index[0]
+            print(f"[DEBUG] Found unique matching row at index {row_idx}")
+            return row_idx
+            
+        # Multiple matches - try to narrow down using other filters
+        print(f"[DEBUG] Found multiple matches, narrowing down with other filters")
+        # Start with all matching rows from filter2
+        multi_filter_mask = matching_mask.copy()
+        
+        # Apply additional filters
+        for i, (col, val) in enumerate(zip(filter_columns, filter_values)):
+            if i != 1:  # Skip filter2 which we already used
+                print(f"[DEBUG] Applying additional filter: {col}={val}")
+                multi_filter_mask &= (df[col].astype(str) == str(val))
+                narrowed_count = multi_filter_mask.sum()
+                print(f"[DEBUG] After filter {i+1}, {narrowed_count} matches remain")
+                # Check if we have a unique match after adding this filter
+                if narrowed_count == 1:
+                    row_idx = df[multi_filter_mask].index[0]
+                    print(f"[DEBUG] Found unique matching row at index {row_idx} after applying all filters")
+                    return row_idx
+        
+        # If we still have multiple matches, use the first one
+        if multi_filter_mask.sum() > 0:
+            row_idx = df[multi_filter_mask].index[0]
+            print(f"[DEBUG] Using first of multiple matches at index {row_idx}")
+            return row_idx
+            
+        # Fall back to the first match from filter2 if the combined filters yielded no results
+        row_idx = matching_rows.index[0]
+        print(f"[DEBUG] Falling back to first filter2 match at index {row_idx}")
+        return row_idx
+    
+    def _validate_row_data(self, row_data, filter_columns, filter_values):
+        """Validate that row data matches filter values."""
+        # Skip validation if task's row_idx was directly obtained from filter2 row info
+        parent = self.parent()
+        if parent and hasattr(parent, "_parse_filter2_value") and len(filter_values) > 1:
+            # Check if we originally had a row number in filter2
+            formatted_filter2 = self.parent().filter_frames[1]["fuzzy"].get() if hasattr(self.parent(), "filter_frames") else None
+            if formatted_filter2 and "⟨Excel Row:" in formatted_filter2:
+                # We have a direct row reference, skip strict validation
+                print(f"[DEBUG] Using row directly from filter2 row info, skipping strict validation")
+                return True
+        
+        if len(filter_columns) < 2:
+            return  # Not enough filters to validate
+            
+        mismatched_filters = []
+        date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d"]
+        
+        print(f"[DEBUG] Validating row data against filter values")
+        for i, (col, val) in enumerate(zip(filter_columns, filter_values)):
+            if i != 1:  # Skip filter2 which we already used for finding the row
+                row_value = row_data[col]
+                
+                # Handle date values more intelligently
+                if "DATE" in col.upper() and pd.notna(row_value):
+                    # Try to normalize both values to a common date format for comparison
+                    row_date = self._normalize_date(row_value, date_formats)
+                    filter_date = self._normalize_date(val, date_formats)
+                    
+                    if row_date and filter_date and row_date == filter_date:
+                        # Dates match when normalized
+                        print(f"[DEBUG] Date match in column {col} after normalization: '{val}' ≈ '{row_value}'")
+                    elif filter_date is None:
+                        # Couldn't parse filter value as date, fall back to string comparison
+                        formatted_value = self._format_date_value(row_value, date_formats)
+                        if formatted_value != str(val).strip():
+                            print(f"[DEBUG] Date mismatch in column {col}: expected '{val}', got '{formatted_value}'")
+                            mismatched_filters.append(f"{col}: expected '{val}', got '{formatted_value}'")
+                        else:
+                            print(f"[DEBUG] Value match in column {col}: '{val}'")
+                    else:
+                        # Dates don't match even after normalization
+                        print(f"[DEBUG] Date mismatch in column {col}: expected '{val}' ({filter_date}), got '{row_value}' ({row_date})")
+                        mismatched_filters.append(f"{col}: expected '{val}' ({filter_date}), got '{row_value}' ({row_date})")
+                elif str(row_value).strip() != str(val).strip():
+                    print(f"[DEBUG] Value mismatch in column {col}: expected '{val}', got '{row_value}'")
+                    mismatched_filters.append(f"{col}: expected '{val}', got '{row_value}'")
+                else:
+                    print(f"[DEBUG] Value match in column {col}: '{val}'")
+        
+        if mismatched_filters:
+            print(f"[DEBUG] Validation failed with mismatches: {mismatched_filters}")
+            
+            # If date format issues are the only problems, warn but don't fail
+            only_date_issues = all("DATE" in mismatch.split(':')[0] for mismatch in mismatched_filters)
+            if only_date_issues:
+                print(f"[DEBUG] Only date format mismatches found, continuing with processing")
+                return True
+                
+            raise Exception(f"Selected row data doesn't match filter values: {', '.join(mismatched_filters)}")
+        
+        print(f"[DEBUG] Row data validation successful")
+        return True
+    
+    def _normalize_date(self, value, date_formats):
+        """Normalize a date value to ISO format (YYYY-MM-DD) for consistent comparison.
+        
+        Returns:
+            The normalized date string, or None if parsing fails
+        """
+        # Already a datetime object
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d")
+        
+        # Try parsing as date string
+        value_str = str(value).strip()
+        for date_format in date_formats:
+            try:
+                parsed_date = datetime.strptime(value_str, date_format)
+                return parsed_date.strftime("%Y-%m-%d")
+            except (ValueError, TypeError):
+                continue
+        
+        return None
+    
+    def _format_date_value(self, value, date_formats):
+        """Format a date value for consistent comparison."""
+        if isinstance(value, datetime):
+            return value.strftime("%d/%m/%Y")
+        
+        # Try parsing as date
+        for date_format in date_formats:
+            try:
+                parsed_date = datetime.strptime(str(value).strip(), date_format)
+                return parsed_date.strftime("%d/%m/%Y")
+            except (ValueError, TypeError):
+                continue
+        
+        # Fall back to string representation
+        return str(value).strip()
+    
+    def _create_template_data(self, row_data, filter_columns, filter_values):
+        """Create template data dict from row data efficiently."""
+        template_data = {}
+        date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d"]
+        
+        # Add filter values to template data
+        for i, (column, value) in enumerate(zip(filter_columns, filter_values), 1):
+            template_data[f"filter{i}"] = value
+            template_data[column] = value
+            
+            # Try to convert date string values to datetime objects
+            if isinstance(value, str):
+                for fmt in date_formats:
+                    try:
+                        date_obj = datetime.strptime(value, fmt)
+                        template_data[f"filter{i}_date"] = date_obj
+                        print(f"[DEBUG] Converted filter{i} to datetime: {date_obj}")
+                        break
+                    except ValueError:
+                        continue
+        
+        # Get rest of the data from the row
+        for column in row_data.index:
+            if column not in template_data:
+                value = row_data[column]
+                template_data[column] = value
+                
+                # Try to convert date values to datetime objects
+                if isinstance(value, str):
+                    for fmt in date_formats:
+                        try:
+                            date_obj = datetime.strptime(value, fmt)
+                            template_data[f"{column}_date"] = date_obj
+                            print(f"[DEBUG] Converted {column} to datetime: {date_obj}")
+                            break
+                        except ValueError:
+                            continue
+                elif isinstance(value, pd.Timestamp):
+                    # Convert pandas Timestamp to Python datetime
+                    template_data[f"{column}_date"] = value.to_pydatetime()
+                    print(f"[DEBUG] Converted pandas Timestamp {column} to datetime")
+        
+        # Add the current date and time
+        template_data["current_date"] = datetime.now()
+        
+        print(f"[DEBUG] Created template data with {len(template_data)} keys")
+        return template_data
+    
+    def _update_excel_hyperlink(self, excel_manager, config, row_idx, processed_path, filter_column, task):
+        """Update Excel hyperlink with error handling."""
+        try:
+            # Store original Excel row index in task
+            task.row_idx = row_idx
+            
+            original_hyperlink = excel_manager.update_pdf_link(
+                config["excel_file"],
+                config["excel_sheet"],
+                row_idx,
+                processed_path,
+                filter_column
+            )
+            
+            # Store original hyperlink for potential revert operation
+            task.original_excel_hyperlink = original_hyperlink
+            task.original_pdf_location = task.pdf_path
+            
+            # Also store the processed file location
+            task.processed_pdf_location = processed_path
+            
+            print(f"[DEBUG] Updated Excel hyperlink for row {row_idx}, original: {original_hyperlink}")
+            
+            return original_hyperlink
+            
+        except Exception as e:
+            print(f"Warning: Could not update Excel hyperlink: {str(e)}")
+            # Continue processing even if hyperlink update fails
     
     def stop(self) -> None:
         """Stop the processing thread."""
@@ -104,11 +524,25 @@ class ProcessingTab(QWidget):
         self.processing_thread.task_failed.connect(self._on_task_failed)
         self.processing_thread.start()
         
+        # Clean up any processed files from previous runs
+        self._cleanup_processed_files()
+        
         # Create UI
         self._setup_ui()
         
         # Register for config changes
         self.config_manager.config_changed.connect(self._on_config_change)
+    
+    def _cleanup_processed_files(self) -> None:
+        """Clean up any processed files from previous runs."""
+        config = self.config_manager.get_config()
+        source_folder = config.get("source_folder")
+        if source_folder:
+            try:
+                self.pdf_manager.cleanup_processed_files(source_folder)
+            except Exception as e:
+                print(f"[DEBUG] Error during cleanup of processed files: {str(e)}")
+                # Continue even if cleanup fails
     
     def _create_section_frame(self, title: str) -> tuple[QFrame, QVBoxLayout]:
         """Create a styled frame for a section."""
@@ -286,6 +720,47 @@ class ProcessingTab(QWidget):
         if self.filter_frames:
             self._load_filter_values(0)
     
+    def _format_filter2_value(self, value: str, row_idx: int, has_hyperlink: bool = False) -> str:
+        """Format filter2 value with row number and checkmark if hyperlinked.
+        
+        Args:
+            value: The original filter value
+            row_idx: The 0-based row index in Excel
+            has_hyperlink: Whether the corresponding Excel cell has a hyperlink
+            
+        Returns:
+            Formatted string with checkmark (if applicable) and row information
+        """
+        prefix = "✓ " if has_hyperlink else ""
+        # +2 because Excel is 1-based and has header
+        return f"{prefix}{value} ⟨Excel Row: {row_idx + 2}⟩"
+    
+    def _parse_filter2_value(self, formatted_value: str) -> tuple[str, int]:
+        """Parse filter2 value to get original value and row number.
+        
+        Args:
+            formatted_value: String in format "✓ value ⟨Excel Row: N⟩"
+            
+        Returns:
+            tuple[str, int]: (original value without formatting, 0-based row index)
+        """
+        import re
+        if not formatted_value:
+            print("[DEBUG] UI received empty filter2 value")
+            return "", -1
+            
+        # Remove checkmark if present
+        formatted_value = formatted_value.replace("✓ ", "", 1)
+        match = re.match(r"(.*?)\s*⟨Excel Row:\s*(\d+)⟩", formatted_value)
+        if match:
+            value = match.group(1).strip()
+            row_num = int(match.group(2))
+            print(f"[DEBUG] UI parsed filter2 value: '{formatted_value}' -> value='{value}', row={row_num - 2}")
+            return value, row_num - 2  # Convert back to 0-based index
+            
+        print(f"[DEBUG] UI failed to parse filter2 value: '{formatted_value}'")
+        return formatted_value, -1
+    
     def _load_filter_values(self, filter_index: int = 0) -> None:
         """Load values for a specific filter.
         
@@ -318,6 +793,11 @@ class ProcessingTab(QWidget):
                 selected_value = self.filter_frames[i]["fuzzy"].get()
                 if not selected_value:
                     continue
+                
+                # If this is filter2, parse it to get the clean value
+                if i == 1:
+                    clean_value, _ = self._parse_filter2_value(selected_value)
+                    selected_value = clean_value
                     
                 # Apply filter
                 column = self.filter_frames[i]["column"]
@@ -326,6 +806,34 @@ class ProcessingTab(QWidget):
             # Get values for the current filter
             column = self.filter_frames[filter_index]["column"]
             values = sorted(filtered_df[column].astype(str).unique().tolist())
+            
+            # For filter2, add row information and checkmark for hyperlinks
+            if filter_index == 1:
+                # Cache hyperlinks for the filter2 column
+                self.excel_manager.cache_hyperlinks_for_column(
+                    config["excel_file"],
+                    config["excel_sheet"],
+                    column
+                )
+                
+                # Format values with row information and hyperlink status
+                formatted_values = []
+                for value in values:
+                    # Find row index in the original dataframe
+                    matches = df[df[column].astype(str) == value]
+                    if matches.empty:
+                        formatted_values.append(value)
+                        continue
+                        
+                    # Use the first matching row
+                    idx = matches.index[0]
+                    has_hyperlink = self.excel_manager.has_hyperlink(idx)
+                    formatted_value = self._format_filter2_value(value, idx, has_hyperlink)
+                    formatted_values.append(formatted_value)
+                
+                values = formatted_values
+            
+            # Update the fuzzy search values
             values = [str(x).strip() for x in values]
             self.filter_frames[filter_index]["fuzzy"].set_values(values)
                 
@@ -371,22 +879,49 @@ class ProcessingTab(QWidget):
             
         # Get filter values
         filter_values = []
-        for frame in self.filter_frames:
+        formatted_filter_values = []  # Store the original formatted values
+        
+        for i, frame in enumerate(self.filter_frames):
             value = frame["fuzzy"].get()
             if not value:
                 self._update_status("All filters must be set")
                 return
+                
+            # Store the original formatted value
+            formatted_filter_values.append(value)
+                
+            # For filter2, extract the clean value without formatting
+            if i == 1:
+                clean_value, row_idx = self._parse_filter2_value(value)
+                print(f"[DEBUG] Processing filter2 value: '{value}' -> clean='{clean_value}', row={row_idx}")
+                value = clean_value
+                
             filter_values.append(value)
+        
+        # Store the current PDF path before closing it
+        current_pdf_path = self.current_pdf
+        
+        # Clear the PDF from the viewer to release file handles
+        self.pdf_viewer.clear_pdf()
         
         # Create task
         task = PDFTask(
-            pdf_path=self.current_pdf,
+            pdf_path=current_pdf_path,
             filter_values=filter_values,
             start_time=datetime.now()
         )
         
+        # Store the row index if we have it
+        if len(formatted_filter_values) > 1:
+            _, row_idx = self._parse_filter2_value(formatted_filter_values[1])
+            if row_idx >= 0:
+                task.row_idx = row_idx
+                print(f"[DEBUG] Pre-setting task row_idx to {row_idx} from filter2 value")
+        
         # Add to processing queue
         self.processing_thread.tasks[task.task_id] = task
+        
+        print(f"[DEBUG] Added task {task.task_id} to queue with filter values: {filter_values}")
         
         # Load next file
         self._load_next_pdf()
@@ -394,6 +929,8 @@ class ProcessingTab(QWidget):
     def _load_next_pdf(self, skip: bool = False) -> None:
         """Load the next PDF file."""
         try:
+            print(f"[DEBUG] _load_next_pdf called with skip={skip}, current_pdf={self.current_pdf}")
+            
             if skip and self.current_pdf:
                 # Create skipped task
                 task = PDFTask(
@@ -403,6 +940,25 @@ class ProcessingTab(QWidget):
                     end_time=datetime.now()
                 )
                 self.processing_thread.tasks[task.task_id] = task
+                
+                # Mark the file as processed in our tracking
+                self.pdf_manager.mark_file_processed(self.current_pdf)
+            
+            # If we have a current PDF, make sure to release it completely
+            current_pdf = None
+            if self.current_pdf:
+                current_pdf = self.current_pdf
+                
+                # Clear the PDF from the viewer
+                self.pdf_viewer.clear_pdf()
+                
+                # Reset our state variables
+                self.current_pdf = None
+                self.current_pdf_start_time = None
+                
+                # Force garbage collection
+                import gc
+                gc.collect()
             
             # Get next file
             config = self.config_manager.get_config()
@@ -415,12 +971,23 @@ class ProcessingTab(QWidget):
                 if v.status in ["pending", "processing"]
             }
             
+            # Temporary yield to let other operations complete
+            QApplication.processEvents()
+            
+            # Now get the next PDF
             next_pdf = self.pdf_manager.get_next_pdf(
                 config["source_folder"],
                 active_tasks
             )
             
+            # We don't need to check if we're reloading the same file here anymore,
+            # because the get_next_pdf method already checks against processed files.
+            # The warning was occurring because we were comparing the newly selected file
+            # with the current file that was preloaded in the UI, not the one that was
+            # actually just processed.
+            
             if next_pdf:
+                print(f"[DEBUG] Loading next PDF: {next_pdf}")
                 self.current_pdf = next_pdf
                 self.current_pdf_start_time = datetime.now()
                 self.pdf_viewer.display_pdf(next_pdf)
@@ -477,6 +1044,40 @@ class ProcessingTab(QWidget):
             task = self.processing_thread.tasks[task_id]
             task.status = status
             task.end_time = datetime.now()
+            
+            # If task is completed successfully, mark as processed but don't reload current PDF
+            if status == "completed":
+                print(f"[DEBUG] Task completed successfully: {task_id}")
+                
+                # Mark the source file as processed in our tracking system
+                # This ensures we won't pick it up again even if it's not deleted
+                if task.pdf_path:
+                    # Also track the original location if different
+                    paths_to_mark = {task.pdf_path}
+                    
+                    if task.original_pdf_location and not self.pdf_manager._paths_equal(
+                            task.original_pdf_location, task.pdf_path):
+                        paths_to_mark.add(task.original_pdf_location)
+                    
+                    # Mark all unique paths as processed
+                    for path in paths_to_mark:
+                        self.pdf_manager.mark_file_processed(path)
+                        print(f"[DEBUG] Marked as processed: {os.path.basename(path)}")
+                
+                # Process events to ensure any pending database writes or file operations complete
+                QApplication.processEvents()
+                
+                # Only load next PDF if the current one is gone or was the one that just finished
+                if (not self.current_pdf) or (self.current_pdf and task.pdf_path and 
+                                           self.pdf_manager._paths_equal(self.current_pdf, task.pdf_path)):
+                    print(f"[DEBUG] Loading next PDF after task completion (current PDF is {self.current_pdf})")
+                    # Use a timer to load the next PDF after a brief delay
+                    QTimer.singleShot(1000, self._load_next_pdf)
+                else:
+                    print(f"[DEBUG] Keeping current PDF displayed: {os.path.basename(self.current_pdf)}")
+                    
+                    # Just update the process button state without reloading
+                    self._update_process_button()
     
     def _on_task_failed(self, task_id: str, error_msg: str) -> None:
         """Handle task failure."""

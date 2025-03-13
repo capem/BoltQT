@@ -8,11 +8,16 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QMenu,
+    QDialog,
+    QTextEdit,
+    QDialogButtonBox,
+    QMessageBox,
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt6.QtGui import QColor, QAction
 from datetime import datetime
 from ..utils.models import PDFTask
+import os
 
 class QueueTableModel(QAbstractTableModel):
     """Model for displaying queue data in a table view."""
@@ -133,34 +138,244 @@ class QueueDisplay(QWidget):
         
         # Set up context menu
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self.table.customContextMenuRequested.connect(self._create_context_menu)
     
     def update_display(self, tasks: Dict[str, PDFTask]) -> None:
         """Update the display with new task data."""
         self.model.update_tasks(tasks)
     
-    def _show_context_menu(self, pos) -> None:
-        """Show context menu for selected task."""
-        index = self.table.indexAt(pos)
-        if not index.isValid():
+    def _create_context_menu(self, position):
+        """Create and show context menu."""
+        global_pos = self.mapToGlobal(position)
+        item = self.itemAt(position)
+        
+        if not item:
             return
-        
-        task = self.model._tasks[index.row()]
-        if task.status != "failed" or not task.error_msg:
+            
+        # Get task ID from item data
+        task_id = item.data(Qt.ItemDataRole.UserRole)
+        if not task_id or task_id not in self.tasks:
             return
+            
+        task = self.tasks[task_id]
         
-        menu = QMenu(self)
-        action = QAction("Show Error Details", self)
-        action.triggered.connect(lambda: self._show_error_details(task))
-        menu.addAction(action)
+        menu = QMenu()
         
-        menu.exec(self.table.viewport().mapToGlobal(pos))
+        if task.status == "completed":
+            # Show details option
+            action_details = menu.addAction("View Details")
+            action_details.triggered.connect(lambda: self._show_task_details(task_id))
+            
+            # Show revert option
+            action_revert = menu.addAction("Revert Task")
+            action_revert.triggered.connect(lambda: self._on_revert_task(task_id))
+            
+        elif task.status == "failed":
+            # Show details option
+            action_details = menu.addAction("View Error Details")
+            action_details.triggered.connect(lambda: self._show_task_details(task_id))
+            
+            # Show retry option
+            action_retry = menu.addAction("Retry")
+            action_retry.triggered.connect(lambda: self._retry_task(task_id))
+            
+        # Show menu
+        menu.exec(global_pos)
+
+    def _show_task_details(self, task_id):
+        """Show details for a selected task."""
+        if task_id not in self.tasks:
+            return
+            
+        task = self.tasks[task_id]
+        
+        # Create dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Task Details")
+        dialog.setMinimumWidth(600)
+        dialog.setMinimumHeight(400)
+        
+        # Create layout
+        layout = QVBoxLayout(dialog)
+        
+        # Create details text
+        details_text = QTextEdit()
+        details_text.setReadOnly(True)
+        
+        # Format task information
+        status_colors = {
+            "completed": "#4CAF50",  # Green
+            "failed": "#F44336",     # Red
+            "skipped": "#FF9800",    # Orange
+            "pending": "#2196F3",    # Blue
+            "processing": "#9C27B0"  # Purple
+        }
+        
+        # Build HTML content
+        html_content = f"""
+        <h2>Task Details</h2>
+        <p><b>Status:</b> <span style="color: {status_colors.get(task.status, '#000')};">{task.status.upper()}</span></p>
+        <p><b>PDF Path:</b> {task.pdf_path}</p>
+        """
+        
+        if task.processed_pdf_location:
+            html_content += f"<p><b>Processed Location:</b> {task.processed_pdf_location}</p>"
+            
+        if task.row_idx is not None:
+            html_content += f"<p><b>Excel Row:</b> {task.row_idx + 2}</p>"  # +2 for header and 1-based index
+            
+        if task.filter_values:
+            html_content += "<p><b>Filter Values:</b></p><ul>"
+            for i, value in enumerate(task.filter_values, 1):
+                html_content += f"<li>Filter {i}: {value}</li>"
+            html_content += "</ul>"
+            
+        if task.start_time:
+            html_content += f"<p><b>Start Time:</b> {task.start_time.strftime('%Y-%m-%d %H:%M:%S')}</p>"
+            
+        if task.end_time:
+            html_content += f"<p><b>End Time:</b> {task.end_time.strftime('%Y-%m-%d %H:%M:%S')}</p>"
+            
+            # Calculate duration
+            duration = task.end_time - task.start_time
+            seconds = duration.total_seconds()
+            html_content += f"<p><b>Duration:</b> {seconds:.2f} seconds</p>"
+            
+        if task.status == "failed" and task.error_msg:
+            html_content += f"""
+            <h3 style="color: #F44336;">Error Information</h3>
+            <pre style="background-color: #f8f8f8; padding: 10px; border-left: 4px solid #F44336;">{task.error_msg}</pre>
+            """
+            
+            # Add potential troubleshooting tips
+            if "permission" in task.error_msg.lower():
+                html_content += """
+                <h4>Troubleshooting Tips:</h4>
+                <ul>
+                    <li>Check if you have write permissions to the destination folder</li>
+                    <li>Verify that the file is not currently open in another application</li>
+                    <li>Try running the application with administrator privileges</li>
+                </ul>
+                """
+            elif "not found" in task.error_msg.lower():
+                html_content += """
+                <h4>Troubleshooting Tips:</h4>
+                <ul>
+                    <li>Verify that the source file exists and hasn't been moved</li>
+                    <li>Check network connectivity if accessing files on a network share</li>
+                </ul>
+                """
+            elif "path" in task.error_msg.lower():
+                html_content += """
+                <h4>Troubleshooting Tips:</h4>
+                <ul>
+                    <li>The path may contain invalid characters or is too long</li>
+                    <li>Check if the drive or network share is accessible</li>
+                </ul>
+                """
+            
+        # Set HTML content
+        details_text.setHtml(html_content)
+        layout.addWidget(details_text)
+        
+        # Add buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        # Show dialog
+        dialog.exec()
+
+    def _retry_task(self, task_id):
+        """Retry a failed task."""
+        if task_id not in self.tasks:
+            return
+            
+        task = self.tasks[task_id]
+        if task.status != "failed":
+            return
+            
+        # Reset task status
+        task.status = "pending"
+        task.error_msg = ""
+        task.start_time = datetime.now()
+        task.end_time = None
+        
+        # Update display
+        self._update_task_item(task_id, task)
+        
+        QMessageBox.information(self, "Task Retry", "Task has been queued for retry.")
     
-    def _show_error_details(self, task: PDFTask) -> None:
-        """Show error details for a failed task."""
-        from .error_dialog import ErrorDialog
-        ErrorDialog(
+    def _on_revert_task(self, task_id):
+        """Handle the Revert Task action from the context menu."""
+        if task_id not in self.tasks:
+            return
+            
+        task = self.tasks[task_id]
+        
+        # Find the ProcessingTab parent
+        processing_tab = self._get_processing_tab()
+        if not processing_tab:
+            QMessageBox.critical(self, "Error", "Internal error: Could not find processing tab.")
+            return
+            
+        # Confirm revert
+        confirm = QMessageBox.question(
             self,
-            "Processing Error",
-            f"Error processing {task.pdf_path}:\n{task.error_msg}"
+            "Confirm Revert",
+            f"Are you sure you want to revert the task for '{os.path.basename(task.pdf_path)}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
+        
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+            
+        try:
+            # Get required configuration
+            config = processing_tab.config_manager.get_config()
+            
+            # Revert Excel hyperlink
+            excel_success = processing_tab.excel_manager.revert_pdf_link(
+                excel_file=config["excel_file"],
+                sheet_name=config["excel_sheet"],
+                row_idx=task.row_idx,
+                filter2_col=config["filter2_column"],
+                original_hyperlink=task.original_excel_hyperlink,
+                original_value=task.filter_values[1] if len(task.filter_values) > 1 else ""
+            )
+            
+            # Revert PDF location
+            pdf_success = processing_tab.pdf_manager.revert_pdf_location(task=task)
+            
+            if excel_success and pdf_success:
+                # Update task status
+                task.status = "reverted"
+                task.end_time = datetime.now()
+                
+                # Update display
+                self.update_display(processing_tab.processing_thread.tasks)
+                
+                QMessageBox.information(
+                    self,
+                    "Revert Successful",
+                    f"Task for '{os.path.basename(task.pdf_path)}' has been reverted successfully."
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Partial Revert",
+                    f"The task was only partially reverted. Excel: {excel_success}, PDF: {pdf_success}"
+                )
+                
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Revert Failed",
+                f"Failed to revert the task: {str(e)}"
+            )
+    
+    def _get_processing_tab(self):
+        """Get the parent ProcessingTab instance."""
+        from .processing_tab import ProcessingTab
+        return ProcessingTab.get_instance()

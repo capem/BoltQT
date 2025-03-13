@@ -102,6 +102,23 @@ class PDFViewer(QWidget):
         # Let the base class handle the event
         return super().eventFilter(obj, event)
     
+    def clear_pdf(self) -> None:
+        """Explicitly close and clear the current PDF document.
+        
+        This method should be called before attempting to remove the PDF file.
+        """
+        # Close the PDF in the manager first
+        if self.current_pdf:
+            self.pdf_manager.close_current_pdf()
+        
+        # Close the document in the viewer
+        self.pdf_document.close()
+        self.current_pdf = None
+        
+        # Force garbage collection to release file handles
+        import gc
+        gc.collect()
+    
     def display_pdf(
         self,
         pdf_path: Optional[str],
@@ -117,8 +134,7 @@ class PDFViewer(QWidget):
         """
         try:
             # Clear current display
-            self.pdf_document.close()
-            self.current_pdf = None
+            self.clear_pdf()
             
             if not pdf_path:
                 return

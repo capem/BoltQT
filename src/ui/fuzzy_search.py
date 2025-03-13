@@ -237,10 +237,88 @@ class FuzzySearchFrame(QWidget):
         menu.exec(self.listbox.mapToGlobal(pos))
     
     def _open_linked_file(self, value: str) -> None:
-        """Open the linked file from the Excel hyperlink."""
-        # This will be implemented when we have access to the ProcessingTab
-        # and ExcelManager instances
-        pass
+        """Open the linked file from the Excel hyperlink.
+        
+        Args:
+            value: The formatted value containing the checkmark and row information
+        """
+        # Find the parent ProcessingTab
+        processing_tab = self._get_processing_tab()
+        if not processing_tab:
+            print("[DEBUG] Could not find ProcessingTab parent")
+            return
+            
+        try:
+            # Parse the value to get the row index
+            _, row_idx = processing_tab._parse_filter2_value(value)
+            if row_idx < 0:
+                print(f"[DEBUG] Invalid row index: {row_idx}")
+                return
+                
+            # Get the configuration
+            config = processing_tab.config_manager.get_config()
+            excel_file = config.get("excel_file")
+            excel_sheet = config.get("excel_sheet")
+            filter2_column = config.get("filter2_column")
+            
+            if not all([excel_file, excel_sheet, filter2_column]):
+                print("[DEBUG] Missing required configuration")
+                return
+                
+            # Get the hyperlink from Excel
+            from openpyxl import load_workbook
+            wb = load_workbook(excel_file, data_only=True)
+            ws = wb[excel_sheet]
+            
+            # Find the column index
+            header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
+            if filter2_column not in header:
+                print(f"[DEBUG] Column '{filter2_column}' not found")
+                return
+            col_idx = header[filter2_column]
+            
+            # Get the cell
+            cell = ws.cell(row=row_idx + 2, column=col_idx)  # +2 for header and 1-based index
+            
+            if not cell.hyperlink:
+                print(f"[DEBUG] No hyperlink found in cell {cell.coordinate}")
+                return
+                
+            # Get the hyperlink target
+            target = cell.hyperlink.target
+            if not target:
+                print("[DEBUG] Empty hyperlink target")
+                return
+                
+            # Resolve the path if it's relative
+            import os
+            if not os.path.isabs(target):
+                target = os.path.join(os.path.dirname(excel_file), target)
+                
+            # Open the file using the system's default application
+            import subprocess
+            import platform
+            
+            if platform.system() == 'Windows':
+                os.startfile(target)
+            elif platform.system() == 'Darwin':  # macOS
+                subprocess.call(('open', target))
+            else:  # Linux
+                subprocess.call(('xdg-open', target))
+                
+            print(f"[DEBUG] Opened linked file: {target}")
+            
+        except Exception as e:
+            print(f"[DEBUG] Error opening linked file: {str(e)}")
+    
+    def _get_processing_tab(self):
+        """Get the parent ProcessingTab instance."""
+        parent = self.parent()
+        while parent:
+            if hasattr(parent, '_parse_filter2_value') and hasattr(parent, 'config_manager'):
+                return parent
+            parent = parent.parent()
+        return None
     
     def eventFilter(self, obj, event) -> bool:
         """Filter events for the listbox."""
