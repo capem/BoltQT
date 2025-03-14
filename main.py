@@ -23,24 +23,29 @@ from src.utils.pdf_manager import PDFManager
 class MainWindow(QMainWindow):
     """Main window of the application."""
     
-    def __init__(self, loading_screen: EnhancedLoadingScreen) -> None:
+    def __init__(self, loading_screen: EnhancedLoadingScreen, app: QApplication) -> None:
         super().__init__()
         
         # Store loading screen reference
         self.loading_screen = loading_screen
+        self.app = app  # Store app reference
         
         # Initialize managers
         self.loading_screen.set_progress(25, "Initializing configuration manager...")
+        self.app.processEvents()  # Process events to update UI
         self.config_manager = ConfigManager()
         
         self.loading_screen.set_progress(35, "Initializing Excel manager...")
+        self.app.processEvents()  # Process events to update UI
         self.excel_manager = ExcelManager()
         
         self.loading_screen.set_progress(45, "Initializing PDF manager...")
+        self.app.processEvents()  # Process events to update UI
         self.pdf_manager = PDFManager()
         
         # Set window properties
         self.loading_screen.set_progress(50, "Setting up main window...")
+        self.app.processEvents()  # Process events to update UI
         self.setMinimumSize(1200, 800)
         
         # Create central widget and layout
@@ -70,6 +75,7 @@ class MainWindow(QMainWindow):
         
         # Create tabs
         self.loading_screen.set_progress(60, "Creating configuration tab...")
+        self.app.processEvents()  # Process events to update UI
         self.config_tab = ConfigTab(
             self.config_manager,
             self.excel_manager,
@@ -78,6 +84,7 @@ class MainWindow(QMainWindow):
         )
         
         self.loading_screen.set_progress(75, "Creating processing tab...")
+        self.app.processEvents()  # Process events to update UI
         self.processing_tab = ProcessingTab(
             self.config_manager,
             self.excel_manager,
@@ -88,11 +95,13 @@ class MainWindow(QMainWindow):
         
         # Add tabs
         self.loading_screen.set_progress(85, "Finalizing UI setup...")
+        self.app.processEvents()  # Process events to update UI
         self.tab_widget.addTab(self.config_tab, "Configuration")
         self.tab_widget.addTab(self.processing_tab, "Processing")
         
         # Hide loading screen after a short delay
         self.loading_screen.set_progress(100, "Ready!")
+        self.app.processEvents()  # Process events to update UI
         QTimer.singleShot(500, self.loading_screen.hide)
 
 def main() -> int:
@@ -117,14 +126,13 @@ def main() -> int:
     # Show the loading screen
     loading_screen.show()
     loading_screen.set_progress(5, "Starting application...")
-    
-    # Process events to ensure loading screen appears before proceeding
-    app.processEvents()
+    app.processEvents()  # Process events to ensure loading screen appears before proceeding
     
     try:
         # Initialize main window with loading screen
         loading_screen.set_progress(20, "Creating main window...")
-        main_window = MainWindow(loading_screen)
+        app.processEvents()  # Process events to update UI
+        main_window = MainWindow(loading_screen, app)  # Pass app instance here
         main_window.setWindowTitle(app_name)  # Use same app name for consistency
         
         # Position window in center of screen
@@ -135,6 +143,7 @@ def main() -> int:
         
         # Show main window and enter Qt's event loop
         loading_screen.set_progress(90, "Ready to launch...")
+        app.processEvents()  # Process events to update UI
         main_window.showMaximized()  # Open the window maximized
         main_window.activateWindow()  # Make sure the window takes focus
         main_window.raise_()  # Bring window to front
@@ -146,6 +155,7 @@ def main() -> int:
         import traceback
         error_msg = f"Error during startup: {str(e)}\n{traceback.format_exc()}"
         loading_screen.set_progress(100, "Error encountered!")
+        app.processEvents()  # Process events to update UI
         # Display error in loading screen
         QMessageBox.critical(None, "Startup Error", error_msg)
         return 1
