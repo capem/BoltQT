@@ -1028,6 +1028,10 @@ class ProcessingTab(QWidget):
         
         print(f"[DEBUG] Added task {task.task_id} to queue with filter values: {filter_values}")
         
+        # Reset all fuzzy search inputs
+        for frame in self.filter_frames:
+            frame["fuzzy"].clear()
+        
         # Load next file
         self._load_next_pdf()
     
@@ -1104,12 +1108,20 @@ class ProcessingTab(QWidget):
                 # Load first filter values
                 self._load_filter_values()
                 
+                # Focus the first filter's search input
+                if self.filter_frames:
+                    self.filter_frames[0]["fuzzy"].entry.setFocus()
+                
                 self._update_status("Ready")
             else:
                 self.current_pdf = None
                 self.current_pdf_start_time = None
                 self.pdf_viewer.display_pdf(None)
                 self._update_status("No files to process")
+                
+                # Focus the first filter's search input even if no new PDF to load
+                if self.filter_frames:
+                    self.filter_frames[0]["fuzzy"].entry.setFocus()
             
             # Update process button state
             self._update_process_button()
