@@ -87,6 +87,9 @@ class QueueDisplay(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         
+        # Store tasks
+        self.tasks = {}
+        
         # Create layout
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -142,24 +145,35 @@ class QueueDisplay(QWidget):
     
     def update_display(self, tasks: Dict[str, PDFTask]) -> None:
         """Update the display with new task data."""
+        self.tasks = tasks
         self.model.update_tasks(tasks)
     
     def _create_context_menu(self, position):
         """Create and show context menu."""
-        global_pos = self.mapToGlobal(position)
-        item = self.itemAt(position)
+        index = self.table.indexAt(position)
         
-        if not item:
+        if not index.isValid():
             return
             
-        # Get task ID from item data
-        task_id = item.data(Qt.ItemDataRole.UserRole)
+        # Get the task directly from the model's task list
+        row = index.row()
+        if row < 0 or row >= len(self.model._tasks):
+            return
+            
+        # Get the task from the model
+        task = self.model._tasks[row]
+        # Get the task_id from the task object
+        task_id = task.task_id
+        
         if not task_id or task_id not in self.tasks:
             return
             
         task = self.tasks[task_id]
         
-        menu = QMenu()
+        # Map to global position for menu display
+        global_pos = self.table.viewport().mapToGlobal(position)
+        
+        menu = QMenu(self)
         
         if task.status == "completed":
             # Show details option
@@ -179,7 +193,11 @@ class QueueDisplay(QWidget):
             action_retry = menu.addAction("Retry")
             action_retry.triggered.connect(lambda: self._retry_task(task_id))
             
-        # Show menu
+        # Check if the menu has any actions
+        if not menu.actions():
+            return
+            
+        # Show menu using exec method
         menu.exec(global_pos)
 
     def _show_task_details(self, task_id):
