@@ -49,22 +49,15 @@ class EnhancedLoadingScreen(QWidget):
     COLOR_TRACK = QColor(220, 220, 220, 150)
     COLOR_TEXT_TITLE = QColor(44, 62, 80)   # #2c3e50
     COLOR_TEXT_PROGRESS = QColor(127, 140, 141)  # #7f8c8d
-    COLOR_TEXT_TIP = QColor(149, 165, 166)  # #95a5a6
     COLOR_BG_TRANSLUCENT = QColor(245, 245, 245, 200)
-    
-    # Default tips
-    DEFAULT_TIPS = ["Organizing files...", "Analyzing content...", "Preparing your workspace..."]
     
     # Animation constants
     SPINNER_UPDATE_MS = 30
-    TIP_ROTATION_MS = 5000
     PULSE_ANIMATION_MS = 1800
     DOT_ANIMATION_MS = 1000
     FADE_IN_MS = 400
-    TIP_FADE_MS = 300
     
     # Number of segments in the progress ring (reduced for performance)
-    RING_SEGMENTS = 8
     
     @log_performance
     def __init__(self, parent: Optional[QWidget] = None, app_name: str = "File Organizer") -> None:
@@ -78,8 +71,6 @@ class EnhancedLoadingScreen(QWidget):
         self.app_name = app_name
         self.progress = 0
         self.progress_text = ""
-        self.tips = self.DEFAULT_TIPS.copy()
-        self.current_tip_index = 0
         self._dots = 0
         self.angle = 0
         self._splash_opacity = 0.0
@@ -91,8 +82,6 @@ class EnhancedLoadingScreen(QWidget):
         self._container_rect = None
         self._shadow_rect = None
         self._cached_bg_gradient = None
-        self._cached_segment_path = None
-        self._cached_segment_paths = None
         self._cached_pulse_colors = {}
         
         # Initialize layout, UI, and animations
@@ -151,8 +140,6 @@ class EnhancedLoadingScreen(QWidget):
         self._container_rect = None
         self._shadow_rect = None
         self._cached_bg_gradient = None
-        self._cached_segment_paths = None
-        self._center_point = None
     
     def resizeEvent(self, event) -> None:
         """Handle resize event to recalculate cached values."""
@@ -162,8 +149,6 @@ class EnhancedLoadingScreen(QWidget):
         self._container_rect = None
         self._shadow_rect = None
         self._cached_bg_gradient = None
-        self._cached_segment_path = None
-        self._cached_segment_paths = None
         self._cached_pulse_colors = {}
 
     @log_performance
@@ -206,18 +191,6 @@ class EnhancedLoadingScreen(QWidget):
         self.progress_label.setFont(msg_font)
         self.progress_label.setStyleSheet(f"color: {self.COLOR_TEXT_PROGRESS.name()};")
         layout.addWidget(self.progress_label)
-        
-        # Tip label
-        self.tip_label = QLabel(self.tips[0])
-        self.tip_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.tip_label.setFont(msg_font)
-        self.tip_label.setStyleSheet(f"color: {self.COLOR_TEXT_TIP.name()}; font-style: italic;")
-        layout.addWidget(self.tip_label)
-        
-        # Apply fade effect to tip label
-        self.tip_opacity = QGraphicsOpacityEffect(self.tip_label)
-        self.tip_opacity.setOpacity(0.8)
-        self.tip_label.setGraphicsEffect(self.tip_opacity)
     
     @log_performance
     def _setup_animations(self) -> None:
@@ -233,11 +206,6 @@ class EnhancedLoadingScreen(QWidget):
         self._create_animation(b"dots", 0, 3, self.DOT_ANIMATION_MS)
         self._create_animation(b"splash_opacity", 0.0, 1.0, self.FADE_IN_MS, 
                               easing=QEasingCurve.Type.OutCubic, loop=False)
-        
-        # Tip rotation timer
-        self.tip_timer = QTimer(self)
-        self.tip_timer.timeout.connect(self._rotate_tip)
-        self.tip_timer.start(self.TIP_ROTATION_MS)
     
     def _create_animation(self, property_name: bytes, start_value: float, end_value: float, 
                           duration: int, easing=QEasingCurve.Type.InOutQuad, loop=True) -> None:
@@ -255,35 +223,6 @@ class EnhancedLoadingScreen(QWidget):
         """Update spinner animation angle."""
         self.angle = (self.angle + 3) % 360
         self.update()
-    
-    def _rotate_tip(self) -> None:
-        """Rotate through tips with a fade transition."""
-        # Create sequential animation for tip transition
-        sequence = QSequentialAnimationGroup(self)
-        
-        # Add fade-out, pause, and fade-in animations
-        fade_out = QPropertyAnimation(self.tip_opacity, b"opacity", self)
-        fade_out.setDuration(self.TIP_FADE_MS)
-        fade_out.setStartValue(0.8)
-        fade_out.setEndValue(0.0)
-        fade_out.setEasingCurve(QEasingCurve.Type.OutQuad)
-        
-        fade_in = QPropertyAnimation(self.tip_opacity, b"opacity", self)
-        fade_in.setDuration(self.TIP_FADE_MS)
-        fade_in.setStartValue(0.0)
-        fade_in.setEndValue(0.8)
-        fade_in.setEasingCurve(QEasingCurve.Type.InQuad)
-        
-        sequence.addAnimation(fade_out)
-        sequence.addPause(100)
-        sequence.addAnimation(fade_in)
-        sequence.finished.connect(self._update_tip_text)
-        sequence.start()
-    
-    def _update_tip_text(self) -> None:
-        """Update the tip text after fade out."""
-        self.current_tip_index = (self.current_tip_index + 1) % len(self.tips)
-        self.tip_label.setText(self.tips[self.current_tip_index])
     
     # Property getters and setters for animations
     @pyqtProperty(float)
@@ -333,12 +272,7 @@ class EnhancedLoadingScreen(QWidget):
         self.progress_text = text if text else f"Loading {self.progress}%"
         self._update_dots()
         self.update()
-    
-    def add_tip(self, tip: str) -> None:
-        """Add a new tip to the rotation."""
-        if tip not in self.tips:
-            self.tips.append(tip)
-    
+
     @log_performance
     def paintEvent(self, event: Any) -> None:
         """Custom paint event to render all visual elements."""
@@ -368,12 +302,6 @@ class EnhancedLoadingScreen(QWidget):
         self._draw_pulse_circle(painter)
         if ENABLE_PERF_LOGGING:
             logger.debug(f'_draw_pulse_circle took {(time.time() - pulse_time)*1000:.2f}ms')
-        
-        # Draw progress ring
-        ring_time = time.time()
-        self._draw_progress_ring(painter)
-        if ENABLE_PERF_LOGGING:
-            logger.debug(f'_draw_progress_ring took {(time.time() - ring_time)*1000:.2f}ms')
         
         # Draw progress bar
         bar_time = time.time()
@@ -452,61 +380,6 @@ class EnhancedLoadingScreen(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(gradient)
         painter.drawEllipse(center, self._pulse_radius, self._pulse_radius)
-    
-    def _draw_progress_ring(self, painter: QPainter) -> None:
-        """Draw the circular progress indicator with rotating segments."""
-        # Use cached center point instead of recalculating
-        center = self._center_point.toPoint()
-        
-        # Save painter state
-        painter.save()
-        painter.translate(center)
-        
-        # Calculate arc dimensions - only once
-        outer_radius = self.progress_ring_radius
-        inner_radius = int(outer_radius * 0.75)
-        
-        # Define segment colors
-        colors = [self.COLOR_PRIMARY, self.COLOR_SECONDARY, self.COLOR_TERTIARY]
-        
-        # Create cached segment paths if not already created
-        if self._cached_segment_paths is None:
-            self._cached_segment_paths = []
-            
-            # Pre-compute segment path template
-            segment_path = QPainterPath()
-            segment_path.arcMoveTo(-outer_radius, -outer_radius, outer_radius * 2, outer_radius * 2, -15)
-            segment_path.arcTo(-outer_radius, -outer_radius, outer_radius * 2, outer_radius * 2, -15, 30)
-            segment_path.arcTo(-inner_radius, -inner_radius, inner_radius * 2, inner_radius * 2, 15, -30)
-            segment_path.closeSubpath()
-            self._cached_segment_path = segment_path
-            
-            # Pre-calculate rotations for each segment
-            segment_angle = 360 / self.RING_SEGMENTS
-            for i in range(self.RING_SEGMENTS):
-                rotation = i * segment_angle
-                path = QPainterPath(self._cached_segment_path)
-                transform = painter.transform()
-                transform.rotate(rotation)
-                path = transform.map(path)
-                self._cached_segment_paths.append((path, i))
-        
-        # Use fewer segments for better performance
-        for path, i in self._cached_segment_paths:
-            # Calculate segment position and opacity
-            adjusted_angle = ((i * (360 / self.RING_SEGMENTS)) + self.angle) % 360
-            opacity = 0.3 + 0.7 * (1 - abs((adjusted_angle % 360) - 180) / 180)
-            
-            # Apply color with opacity
-            color = QColor(colors[i % 3])
-            color.setAlphaF(opacity)
-            
-            # Draw segment
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(color)
-            painter.drawPath(path)
-        
-        painter.restore()
     
     def _draw_progress_bar(self, painter: QPainter) -> None:
         """Draw the horizontal progress bar below the spinner."""

@@ -117,12 +117,6 @@ def main() -> int:
     # Create and show loading screen first
     loading_screen = EnhancedLoadingScreen(app_name=app_name)
     
-    # Add relevant tips for loading phases
-    loading_screen.add_tip("Initializing application...")
-    loading_screen.add_tip("Loading configuration...")
-    loading_screen.add_tip("Preparing document processing...")
-    loading_screen.add_tip("Setting up UI components...")
-    
     # Show the loading screen
     loading_screen.show()
     loading_screen.set_progress(5, "Starting application...")
