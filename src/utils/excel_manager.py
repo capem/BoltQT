@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import Dict, Optional, Tuple, List, Any
-from datetime import datetime
 import os
 import pandas as pd
 from openpyxl import load_workbook
@@ -9,9 +8,10 @@ from shutil import copy2
 from os import path, remove
 import traceback
 
+
 class ExcelManager(QObject):
     """Manages Excel file operations and data caching."""
-    
+
     def __init__(self) -> None:
         super().__init__()
         self.excel_data: Optional[pd.DataFrame] = None
@@ -33,42 +33,42 @@ class ExcelManager(QObject):
         self.excel_data = None
         print("[DEBUG] All caches cleared")
         self._last_sheet: Optional[str] = None
-    
+
     def load_excel_data(self, file_path: str, sheet_name: str) -> bool:
         """Load Excel data from file into DataFrame.
-        
+
         Returns:
             bool: True if data was reloaded, False if using cached data
         """
         if not file_path or not sheet_name:
             return False
-            
+
         try:
             # Check if we need to reload
-            if (self.excel_data is not None and 
-                self._last_file == file_path and 
-                self._last_sheet == sheet_name):
+            if (
+                self.excel_data is not None
+                and self._last_file == file_path
+                and self._last_sheet == sheet_name
+            ):
                 return False
-            
+
             print(f"[DEBUG] Loading Excel data from {file_path}, sheet: {sheet_name}")
-            
+
             # Load the data
             self.excel_data = pd.read_excel(
-                file_path,
-                sheet_name=sheet_name,
-                engine="openpyxl"
+                file_path, sheet_name=sheet_name, engine="openpyxl"
             )
-            
+
             # Update last loaded file info
             self._last_file = file_path
             self._last_sheet = sheet_name
-            
+
             # Clear hyperlink cache
             self._hyperlink_cache.clear()
             self._last_cached_key = None
-            
+
             return True
-            
+
         except Exception as e:
             print(f"[DEBUG] Error loading Excel data: {str(e)}")
             self.excel_data = None
@@ -77,52 +77,52 @@ class ExcelManager(QObject):
             self._hyperlink_cache.clear()
             self._last_cached_key = None
             raise
-    
+
     def cache_hyperlinks_for_column(
         self, file_path: str, sheet_name: str, column_name: str
     ) -> None:
         """Cache hyperlinks for a specific column."""
         try:
             cache_key = f"{file_path}:{sheet_name}:{column_name}"
-            
+
             # Check if we need to update cache
-            if (self._last_cached_key == cache_key and self._hyperlink_cache):
+            if self._last_cached_key == cache_key and self._hyperlink_cache:
                 print("[DEBUG] Using existing hyperlink cache")
                 return
-            
+
             print(f"[DEBUG] Caching hyperlinks for column: {column_name}")
-            
+
             # Load workbook
             wb = load_workbook(file_path, data_only=True)
             ws = wb[sheet_name]
-            
+
             # Find the column index
             header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
             if column_name not in header:
                 print(f"[DEBUG] Column '{column_name}' not found")
                 return
             col_idx = header[column_name]
-            
+
             # Clear existing cache
             self._hyperlink_cache.clear()
-            
+
             # Cache hyperlinks
             for row_idx in range(2, ws.max_row + 1):  # Skip header row
                 cell = ws.cell(row=row_idx, column=col_idx)
                 self._hyperlink_cache[row_idx - 2] = cell.hyperlink is not None
-            
+
             self._last_cached_key = cache_key
-            
+
         except Exception as e:
             print(f"[DEBUG] Error caching hyperlinks: {str(e)}")
             self._hyperlink_cache.clear()
             self._last_cached_key = None
             raise
-    
+
     def has_hyperlink(self, row_idx: int) -> bool:
         """Check if a specific row has a hyperlink."""
         return bool(self._hyperlink_cache.get(row_idx, False))
-    
+
     def update_pdf_link(
         self,
         file_path: str,
@@ -132,71 +132,77 @@ class ExcelManager(QObject):
         column_name: str,
     ) -> Optional[str]:
         """Update PDF hyperlink in Excel file.
-        
+
         Returns:
             Optional[str]: Original hyperlink if there was one, None otherwise
         """
         try:
-            print(f"[DEBUG] Updating PDF link in Excel: file={file_path}, sheet={sheet_name}, row={row_idx}, column={column_name}")
+            print(
+                f"[DEBUG] Updating PDF link in Excel: file={file_path}, sheet={sheet_name}, row={row_idx}, column={column_name}"
+            )
             print(f"[DEBUG] Linking to PDF: {pdf_path}")
-            
+
             # Load workbook
             wb = load_workbook(file_path)
             ws = wb[sheet_name]
-            
+
             # Find the column index
             header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
             if column_name not in header:
                 raise ValueError(f"Column '{column_name}' not found")
             col_idx = header[column_name]
-            
+
             # Get the cell
             excel_row = row_idx + 2  # +2 for header and 1-based index
             cell = ws.cell(row=excel_row, column=col_idx)
-            
+
             print(f"[DEBUG] Excel cell: {cell.coordinate}, Current value: {cell.value}")
-            
+
             # Store original hyperlink
             original_link = None
             if cell.hyperlink:
-                original_link = cell.hyperlink.target if hasattr(cell.hyperlink, 'target') else str(cell.hyperlink)
+                original_link = (
+                    cell.hyperlink.target
+                    if hasattr(cell.hyperlink, "target")
+                    else str(cell.hyperlink)
+                )
                 print(f"[DEBUG] Found existing hyperlink: {original_link}")
-            
+
             # Check if paths are on different mount points/drives
             excel_drive = os.path.splitdrive(os.path.abspath(file_path))[0]
             pdf_drive = os.path.splitdrive(os.path.abspath(pdf_path))[0]
-            
+
             # For network paths, get the server and share
             excel_mount = excel_drive
             pdf_mount = pdf_drive
-            
+
             # Handle UNC paths (network shares)
-            if file_path.startswith('\\\\'):
-                excel_parts = file_path.split('\\')
+            if file_path.startswith("\\\\"):
+                excel_parts = file_path.split("\\")
                 if len(excel_parts) >= 4:  # \\server\share\...
                     excel_mount = f"\\\\{excel_parts[2]}\\{excel_parts[3]}"
-                    
-            if pdf_path.startswith('\\\\'):
-                pdf_parts = pdf_path.split('\\')
+
+            if pdf_path.startswith("\\\\"):
+                pdf_parts = pdf_path.split("\\")
                 if len(pdf_parts) >= 4:  # \\server\share\...
                     pdf_mount = f"\\\\{pdf_parts[2]}\\{pdf_parts[3]}"
-            
+
             # Also handle forward slash network paths
-            if file_path.startswith('//'):
-                excel_parts = file_path.split('/')
+            if file_path.startswith("//"):
+                excel_parts = file_path.split("/")
                 if len(excel_parts) >= 4:  # //server/share/...
                     excel_mount = f"//{excel_parts[2]}/{excel_parts[3]}"
-                    
-            if pdf_path.startswith('//'):
-                pdf_parts = pdf_path.split('/')
+
+            if pdf_path.startswith("//"):
+                pdf_parts = pdf_path.split("/")
                 if len(pdf_parts) >= 4:  # //server/share/...
                     pdf_mount = f"//{pdf_parts[2]}/{pdf_parts[3]}"
-            
+
             print(f"[DEBUG] Excel mount: {excel_mount}, PDF mount: {pdf_mount}")
-            
+
             # Determine if we can use a relative path
             use_relative_path = excel_mount == pdf_mount
-            
+
             # Set the target path
             if use_relative_path:
                 try:
@@ -211,17 +217,17 @@ class ExcelManager(QObject):
                 # Use absolute path if on different mounts
                 target_path = pdf_path
                 print(f"[DEBUG] Using absolute path (different mounts): {target_path}")
-                print(f"[DEBUG] path is on mount '{pdf_mount}', start on mount '{excel_mount}'")
-            
+                print(
+                    f"[DEBUG] path is on mount '{pdf_mount}', start on mount '{excel_mount}'"
+                )
+
             # Update hyperlink (handle different openpyxl versions)
             try:
                 # Method 1: Using Hyperlink class (newer versions of openpyxl)
                 from openpyxl.worksheet.hyperlink import Hyperlink
+
                 try:
-                    hyperlink = Hyperlink(
-                        ref=cell.coordinate,
-                        target=target_path
-                    )
+                    hyperlink = Hyperlink(ref=cell.coordinate, target=target_path)
                     # For compatibility with different versions, try to add target_mode attribute
                     # if it doesn't exist in the constructor
                     hyperlink.target_mode = "file"
@@ -229,31 +235,37 @@ class ExcelManager(QObject):
                     print(f"[DEBUG] Updated hyperlink using newer API: {target_path}")
                 except TypeError as e:
                     # Try the older API if the newer one fails
-                    print(f"[DEBUG] Newer hyperlink API failed: {str(e)}, trying older API")
+                    print(
+                        f"[DEBUG] Newer hyperlink API failed: {str(e)}, trying older API"
+                    )
                     raise e
             except Exception as e:
                 try:
                     # Method 2: Direct assignment (older versions)
                     cell.hyperlink = target_path
-                    print(f"[DEBUG] Updated hyperlink using direct assignment: {target_path}")
+                    print(
+                        f"[DEBUG] Updated hyperlink using direct assignment: {target_path}"
+                    )
                 except Exception as e2:
                     # Method 3: Last resort - set the display text to the path
-                    print(f"[DEBUG] Hyperlink methods failed: {str(e)}, {str(e2)}. Setting display text instead.")
+                    print(
+                        f"[DEBUG] Hyperlink methods failed: {str(e)}, {str(e2)}. Setting display text instead."
+                    )
                     cell.value = f"Link: {target_path}"
-            
+
             # Save workbook
             wb.save(file_path)
-            print(f"[DEBUG] Excel file saved successfully")
-            
+            print("[DEBUG] Excel file saved successfully")
+
             # Update cache
             self._hyperlink_cache[row_idx] = True
-            
+
             return original_link
-            
+
         except Exception as e:
             print(f"[DEBUG] Error updating PDF link: {str(e)}")
             return None
-    
+
     def revert_pdf_link(
         self,
         excel_file: str,
@@ -264,7 +276,7 @@ class ExcelManager(QObject):
         original_value: str,
     ) -> bool:
         """Revert PDF hyperlink in Excel file.
-        
+
         Args:
             excel_file: Path to the Excel file.
             sheet_name: Name of the sheet.
@@ -272,92 +284,109 @@ class ExcelManager(QObject):
             filter2_col: Name of the filter2 column.
             original_hyperlink: Original hyperlink to restore, or None to remove hyperlink.
             original_value: Original value to restore.
-            
+
         Returns:
             bool: True if successful, False otherwise.
         """
         try:
-            print(f"[DEBUG] Reverting hyperlink for row {row_idx} in {excel_file}, sheet {sheet_name}")
-            print(f"[DEBUG] Original hyperlink: {original_hyperlink}, Original value: {original_value}")
-            
+            print(
+                f"[DEBUG] Reverting hyperlink for row {row_idx} in {excel_file}, sheet {sheet_name}"
+            )
+            print(
+                f"[DEBUG] Original hyperlink: {original_hyperlink}, Original value: {original_value}"
+            )
+
             # Load workbook
             from openpyxl import load_workbook
             from openpyxl.worksheet.hyperlink import Hyperlink
-            
+
             wb = load_workbook(excel_file)
             ws = wb[sheet_name]
-            
+
             # Find the column index
             header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
             if filter2_col not in header:
                 raise ValueError(f"Column '{filter2_col}' not found")
             col_idx = header[filter2_col]
-            
+
             # Get the cell
-            cell = ws.cell(row=row_idx + 2, column=col_idx)  # +2 for header and 1-based index
-            print(f"[DEBUG] Identified Excel cell: {cell.coordinate}, Current value: {cell.value}")
-            
+            cell = ws.cell(
+                row=row_idx + 2, column=col_idx
+            )  # +2 for header and 1-based index
+            print(
+                f"[DEBUG] Identified Excel cell: {cell.coordinate}, Current value: {cell.value}"
+            )
+
             # Update or remove hyperlink - handle different openpyxl versions
             if original_hyperlink:
                 try:
                     # Method 1: Using Hyperlink class (newer versions of openpyxl)
                     hyperlink = Hyperlink(
-                        ref=cell.coordinate,
-                        target=original_hyperlink
+                        ref=cell.coordinate, target=original_hyperlink
                     )
                     # For compatibility with different versions, try to add target_mode after constructor
                     hyperlink.target_mode = "file"
                     cell.hyperlink = hyperlink
-                    print(f"[DEBUG] Restored hyperlink using newer API: {original_hyperlink}")
+                    print(
+                        f"[DEBUG] Restored hyperlink using newer API: {original_hyperlink}"
+                    )
                 except TypeError as e:
                     try:
                         # Method 2: Direct assignment (older versions)
                         cell.hyperlink = original_hyperlink
-                        print(f"[DEBUG] Restored hyperlink using direct assignment: {original_hyperlink}")
+                        print(
+                            f"[DEBUG] Restored hyperlink using direct assignment: {original_hyperlink}"
+                        )
                     except Exception as e2:
-                        print(f"[DEBUG] Hyperlink methods failed: {str(e)}, {str(e2)}. Setting display text only.")
+                        print(
+                            f"[DEBUG] Hyperlink methods failed: {str(e)}, {str(e2)}. Setting display text only."
+                        )
                         # Fallback: Set display text only
                         cell.value = f"{original_value} [Link:{original_hyperlink}]"
-                        print(f"[DEBUG] Set display text with link reference")
+                        print("[DEBUG] Set display text with link reference")
             else:
                 # Remove hyperlink - handle different openpyxl versions
                 try:
                     cell.hyperlink = None
-                    print(f"[DEBUG] Removed hyperlink")
+                    print("[DEBUG] Removed hyperlink")
                 except Exception as e:
                     # If direct removal fails, try other methods
                     try:
                         # Some versions may use cell._hyperlink
-                        if hasattr(cell, '_hyperlink'):
+                        if hasattr(cell, "_hyperlink"):
                             cell._hyperlink = None
-                            print(f"[DEBUG] Removed hyperlink using _hyperlink attribute")
+                            print(
+                                "[DEBUG] Removed hyperlink using _hyperlink attribute"
+                            )
                     except Exception as e2:
-                        print(f"[DEBUG] Failed to remove hyperlink: {str(e)}, {str(e2)}")
-            
+                        print(
+                            f"[DEBUG] Failed to remove hyperlink: {str(e)}, {str(e2)}"
+                        )
+
             # Ensure cell value is restored
             if cell.value != original_value:
                 cell.value = original_value
                 print(f"[DEBUG] Restored cell value to: {original_value}")
-            
+
             # Save workbook
             wb.save(excel_file)
-            print(f"[DEBUG] Excel file saved successfully after reversion")
-            
+            print("[DEBUG] Excel file saved successfully after reversion")
+
             # Update cache
             self._hyperlink_cache[row_idx] = original_hyperlink is not None
-            
+
             return True
-            
+
         except Exception as e:
             print(f"[DEBUG] Error reverting PDF link: {str(e)}")
             return False
 
     def get_available_sheets(self, file_path: str) -> list[str]:
         """Get list of available sheets in Excel file.
-        
+
         Args:
             file_path: Path to Excel file
-            
+
         Returns:
             List of sheet names
         """
@@ -365,55 +394,55 @@ class ExcelManager(QObject):
             # Check cache first
             if file_path in self._sheet_cache:
                 return self._sheet_cache[file_path]
-            
+
             # Load workbook
             wb = load_workbook(file_path, read_only=True)
             sheet_names = wb.sheetnames
-            
+
             # Cache results
             self._sheet_cache[file_path] = sheet_names
-            
+
             return sheet_names
-            
+
         except Exception as e:
             print(f"[DEBUG] Error getting sheet names: {str(e)}")
             raise
-            
+
     def get_sheet_columns(self, file_path: str, sheet_name: str) -> list[str]:
         """Get list of column names from specified sheet.
-        
+
         Args:
             file_path: Path to Excel file
             sheet_name: Name of sheet to read
-            
+
         Returns:
             List of column names from first row
         """
         try:
             # Generate cache key
             cache_key = f"{file_path}:{sheet_name}"
-            
+
             # Check cache first
             if cache_key in self._column_cache:
                 return self._column_cache[cache_key]
-            
+
             # Load workbook and get first row only
             wb = load_workbook(file_path, read_only=True)
             ws = wb[sheet_name]
-            
+
             # Get header row values
             header_row = next(ws.rows)
             column_names = [cell.value for cell in header_row if cell.value]
-            
+
             # Cache results
             self._column_cache[cache_key] = column_names
-            
+
             return column_names
-            
+
         except Exception as e:
             print(f"[DEBUG] Error getting column names: {str(e)}")
             raise
-    
+
     def add_new_row(
         self,
         file_path: str,
@@ -422,123 +451,143 @@ class ExcelManager(QObject):
         values: List[str],
     ) -> Tuple[Dict[str, Any], int]:
         """Add a new row to the Excel file.
-        
+
         Returns:
             Tuple[Dict[str, Any], int]: Dictionary of row data and the row index
         """
         try:
-            print(f"[DEBUG] Cache state before adding new row - size: {len(self._hyperlink_cache)}")
-            
+            print(
+                f"[DEBUG] Cache state before adding new row - size: {len(self._hyperlink_cache)}"
+            )
+
             # Validate input
             if len(columns) != len(values):
-                raise ValueError(f"Number of columns ({len(columns)}) and values ({len(values)}) must match")
-                
+                raise ValueError(
+                    f"Number of columns ({len(columns)}) and values ({len(values)}) must match"
+                )
+
             print(f"[DEBUG] Adding new row with values: {dict(zip(columns, values))}")
-            
+
             # Create a backup
             backup_file = file_path + ".bak"
             copy2(file_path, backup_file)
             print(f"[DEBUG] Created backup at {backup_file}")
-            
+
             try:
                 # Load workbook
                 wb = load_workbook(file_path)
                 ws = wb[sheet_name]
-                
+
                 # Get header row
                 header_row = ws[1]
-                col_indices = {cell.value: idx + 1 for idx, cell in enumerate(header_row)}
-                
+                col_indices = {
+                    cell.value: idx + 1 for idx, cell in enumerate(header_row)
+                }
+
                 # Verify all filter columns exist
                 for col in columns:
                     if col not in col_indices:
-                        raise ValueError(f"Column '{col}' not found in Excel file. Available columns: {', '.join(col_indices.keys())}")
-                
+                        raise ValueError(
+                            f"Column '{col}' not found in Excel file. Available columns: {', '.join(col_indices.keys())}"
+                        )
+
                 # Find the first table's range to determine where to add the new row
                 table_end_row = None
                 for table in ws.tables.values():
                     try:
                         current_ref = table.ref
-                        ref_parts = current_ref.split(':')
+                        ref_parts = current_ref.split(":")
                         if len(ref_parts) == 2:
                             end_ref = ref_parts[1]
-                            table_end_row = int(''.join(filter(str.isdigit, end_ref)))
+                            table_end_row = int("".join(filter(str.isdigit, end_ref)))
                             print(f"[DEBUG] Found table with end row: {table_end_row}")
                             break  # Use the first table found
                     except Exception as e:
                         print(f"[DEBUG] Error processing table reference: {str(e)}")
                         continue
-                
+
                 # If we found a table, add the row immediately after it
                 if table_end_row:
                     new_row = table_end_row + 1
                 else:
                     # Fallback to adding at the end if no table found
                     new_row = ws.max_row + 1
-                    
-                print(f"[DEBUG] Adding row at index {new_row - 2} (Excel row {new_row})")
-                
+
+                print(
+                    f"[DEBUG] Adding row at index {new_row - 2} (Excel row {new_row})"
+                )
+
                 # First pass: Copy all formats from the template row (use row before new row)
                 template_row = new_row - 1
                 print(f"[DEBUG] Using template row {template_row} for formatting")
-                
+
                 for col_idx in range(1, len(header_row) + 1):
                     template_cell = ws.cell(row=template_row, column=col_idx)
                     new_cell = ws.cell(row=new_row, column=col_idx)
                     # Copy number format and style
                     new_cell.number_format = template_cell.number_format
                     new_cell._style = template_cell._style
-                
+
                 # Second pass: Set values with proper type conversion
                 for col, val in zip(columns, values):
                     col_idx = col_indices[col]
                     template_cell = ws.cell(row=template_row, column=col_idx)
                     new_cell = ws.cell(row=new_row, column=col_idx)
-                    
+
                     # Convert value based on the column type
                     if "DATE" in col.upper() and val:
                         try:
                             # Try to parse date in various formats
-                            date_formats = ['%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d', '%Y/%m/%d']
+                            date_formats = [
+                                "%d/%m/%Y",
+                                "%d-%m-%Y",
+                                "%Y-%m-%d",
+                                "%Y/%m/%d",
+                            ]
                             date_val = None
-                            
+
                             for fmt in date_formats:
                                 try:
                                     from datetime import datetime
+
                                     date_val = datetime.strptime(val, fmt)
                                     break
                                 except ValueError:
                                     continue
-                                    
+
                             if date_val:
                                 new_cell.value = date_val
-                                new_cell.number_format = 'DD/MM/YYYY'
+                                new_cell.number_format = "DD/MM/YYYY"
                             else:
                                 # Fallback to pandas datetime parsing
                                 date_val = pd.to_datetime(val)
                                 new_cell.value = date_val.to_pydatetime()
-                                new_cell.number_format = 'DD/MM/YYYY'
+                                new_cell.number_format = "DD/MM/YYYY"
                         except Exception as e:
-                            print(f"[DEBUG] Could not parse date '{val}' for column '{col}': {str(e)}")
+                            print(
+                                f"[DEBUG] Could not parse date '{val}' for column '{col}': {str(e)}"
+                            )
                             new_cell.value = val
                     elif "MNT" in col.upper() or "MONTANT" in col.upper():
                         try:
                             # Handle number format (comma as decimal separator)
                             if isinstance(val, str):
                                 # Replace comma with dot for conversion, handle thousands separator
-                                num_str = val.replace(' ', '').replace(',', '.')
+                                num_str = val.replace(" ", "").replace(",", ".")
                                 num_val = float(num_str)
                                 new_cell.value = num_val
                             else:
                                 new_cell.value = float(val)
                         except (ValueError, TypeError):
                             new_cell.value = val
-                            print(f"[DEBUG] Could not parse number '{val}' for column '{col}'")
+                            print(
+                                f"[DEBUG] Could not parse number '{val}' for column '{col}'"
+                            )
                     else:
                         new_cell.value = val
-                        
+
                     print(f"[DEBUG] Set value '{val}' for column '{col}'")
-                
+
                 # Check and expand table ranges to include the new row
                 if table_end_row:
                     print("[DEBUG] Checking for tables that need to be expanded")
@@ -546,51 +595,55 @@ class ExcelManager(QObject):
                         try:
                             current_ref = table.ref
                             # Split table reference into components (e.g., 'A1:D10' -> ['A1', 'D10'])
-                            ref_parts = current_ref.split(':')
+                            ref_parts = current_ref.split(":")
                             if len(ref_parts) != 2:
                                 continue
-                                
+
                             start_ref, end_ref = ref_parts
-                            
+
                             # Extract row numbers from references
-                            start_row = int(''.join(filter(str.isdigit, start_ref)))
-                            end_row = int(''.join(filter(str.isdigit, end_ref)))
-                            
+                            start_row = int("".join(filter(str.isdigit, start_ref)))
+                            end_row = int("".join(filter(str.isdigit, end_ref)))
+
                             # Check if new row is immediately after table
                             if end_row == new_row - 1:
                                 # Get column letters from references (e.g., 'A' from 'A1')
-                                start_col = ''.join(filter(str.isalpha, start_ref))
-                                end_col = ''.join(filter(str.isalpha, end_ref))
-                                
+                                start_col = "".join(filter(str.isalpha, start_ref))
+                                end_col = "".join(filter(str.isalpha, end_ref))
+
                                 # Create new reference that includes the new row
                                 new_ref = f"{start_col}{start_row}:{end_col}{new_row}"
                                 table.ref = new_ref
-                                print(f"[DEBUG] Expanded table '{table.displayName}' range to {new_ref}")
+                                print(
+                                    f"[DEBUG] Expanded table '{table.displayName}' range to {new_ref}"
+                                )
                         except Exception as table_e:
                             print(f"[DEBUG] Error expanding table: {str(table_e)}")
                             # Continue with other tables even if one fails
                             continue
-                
+
                 # Save workbook
                 wb.save(file_path)
-                
+
                 # Update cache for the new row
                 self._hyperlink_cache[new_row - 2] = False
-                
+
                 # Create a row data dictionary that includes all the values
                 row_data = {}
                 if self.excel_data is not None:
                     # Create data for all columns (initialize with None)
                     for col in self.excel_data.columns:
                         row_data[col] = None
-                    
+
                     # Update with the values we have
                     for col, val in zip(columns, values):
                         row_data[col] = val
-                    
+
                     # Add the new row to our DataFrame
-                    self.excel_data = pd.concat([self.excel_data, pd.DataFrame([row_data])], ignore_index=True)
-                    
+                    self.excel_data = pd.concat(
+                        [self.excel_data, pd.DataFrame([row_data])], ignore_index=True
+                    )
+
                     # Row index is the last row (0-based)
                     row_idx = len(self.excel_data) - 1
                 else:
@@ -604,29 +657,29 @@ class ExcelManager(QObject):
                     else:
                         # Manual construction if row index is out of bounds
                         row_data = {col: val for col, val in zip(columns, values)}
-                
+
                 # Remove backup after successful write
                 if path.exists(backup_file):
                     remove(backup_file)
                     print("[DEBUG] Removed backup file after successful write")
-                
+
                 print(f"[DEBUG] Successfully added new row at index {row_idx}")
                 return row_data, row_idx
-                
+
             finally:
-                if 'wb' in locals():
+                if "wb" in locals():
                     wb.close()
-                
+
         except Exception as e:
             print(f"[DEBUG] Error adding new row: {str(e)}")
             print(f"[DEBUG] Error details: {traceback.format_exc()}")
-            
+
             # Try to restore from backup
-            if 'backup_file' in locals() and path.exists(backup_file):
+            if "backup_file" in locals() and path.exists(backup_file):
                 try:
                     copy2(backup_file, file_path)
                     print("[DEBUG] Restored from backup after error")
                 except Exception as backup_e:
                     print(f"[DEBUG] Failed to restore from backup: {str(backup_e)}")
-            
+
             raise

@@ -19,7 +19,9 @@ class PDFTask:
     row_idx: int = -1
     original_excel_hyperlink: Optional[str] = None
     original_pdf_location: Optional[str] = None
-    processed_pdf_location: Optional[str] = None  # Path where the PDF was moved after processing
+    processed_pdf_location: Optional[str] = (
+        None  # Path where the PDF was moved after processing
+    )
     rotation_angle: int = 0
 
     @staticmethod

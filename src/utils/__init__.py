@@ -6,10 +6,4 @@ from .pdf_manager import PDFManager
 from .template_manager import TemplateManager
 from .models import PDFTask
 
-__all__ = [
-    'ConfigManager',
-    'ExcelManager',
-    'PDFManager',
-    'TemplateManager',
-    'PDFTask'
-]
+__all__ = ["ConfigManager", "ExcelManager", "PDFManager", "TemplateManager", "PDFTask"]
