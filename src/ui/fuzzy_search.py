@@ -292,8 +292,32 @@ class FuzzySearchFrame(QWidget):
                 
             # Resolve the path if it's relative
             import os
+            import urllib.parse
+            
+            # Fix 1: URL decode the target path to handle %20 and other encoded characters
+            target = urllib.parse.unquote(target)
+            
             if not os.path.isabs(target):
                 target = os.path.join(os.path.dirname(excel_file), target)
+                
+            # Fix 2: Normalize path separators based on the platform
+            # For Windows (when running on WSL or native Windows)
+            if target.startswith('//') or target.startswith('\\\\'):
+                # This is a UNC path - ensure consistent formatting
+                if os.name == 'nt':  # Native Windows
+                    # Convert to Windows backslash format
+                    target = target.replace('/', '\\')
+                    # Ensure UNC prefix is correct
+                    if not target.startswith('\\\\'):
+                        target = '\\\\' + target[2:]
+                else:  # WSL or Linux
+                    # Convert to forward slash format for WSL
+                    target = target.replace('\\', '/')
+                    # Ensure UNC prefix is correct
+                    if not target.startswith('//'):
+                        target = '//' + target[2:]
+            
+            print(f"[DEBUG] Normalized target path: {target}")
                 
             # Open the file using the system's default application
             import subprocess
