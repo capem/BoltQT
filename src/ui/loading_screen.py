@@ -1,12 +1,36 @@
 from __future__ import annotations
-from typing import Optional, Any, Tuple
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QGraphicsOpacityEffect
-from PyQt6.QtCore import (Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QSize, 
-                          pyqtProperty, QParallelAnimationGroup, QSequentialAnimationGroup, QPointF,
-                          QRect)
-from PyQt6.QtGui import (QPainter, QColor, QPainterPath, QLinearGradient, QPen, 
-                         QFont, QFontMetrics, QBrush, QRadialGradient)
-import math
+from typing import Optional, Any
+import time
+import logging
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QGraphicsOpacityEffect
+from PyQt6.QtCore import (Qt, QTimer, QPropertyAnimation, QEasingCurve, QSize,
+                          pyqtProperty, QSequentialAnimationGroup, QPointF, QRect)
+from PyQt6.QtGui import (QPainter, QColor, QPainterPath, QLinearGradient, QPen,
+                         QFont, QFontMetrics, QRadialGradient)
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG,
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('LoadingScreen')
+
+# Set to False to disable performance logging in production
+ENABLE_PERF_LOGGING = True
+
+
+def log_performance(func):
+    """Decorator to log the execution time of methods."""
+    def wrapper(*args, **kwargs):
+        if not ENABLE_PERF_LOGGING:
+            return func(*args, **kwargs)
+        
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        
+        logger.debug(f'{func.__name__} took {(end_time - start_time)*1000:.2f}ms')
+        return result
+    return wrapper
+
 
 class EnhancedLoadingScreen(QWidget):
     """
@@ -14,6 +38,35 @@ class EnhancedLoadingScreen(QWidget):
     and optimized perceived performance.
     """
     
+    # Define color constants
+    COLOR_PRIMARY = QColor(52, 152, 219)    # Blue
+    COLOR_SECONDARY = QColor(46, 204, 113)  # Green
+    COLOR_TERTIARY = QColor(155, 89, 182)   # Purple
+    COLOR_BG_LIGHT = QColor(255, 255, 255, 240)
+    COLOR_BG_DARK = QColor(248, 248, 248, 240)
+    COLOR_SHADOW = QColor(0, 0, 0, 30)
+    COLOR_BORDER = QColor(220, 220, 220, 100)
+    COLOR_TRACK = QColor(220, 220, 220, 150)
+    COLOR_TEXT_TITLE = QColor(44, 62, 80)   # #2c3e50
+    COLOR_TEXT_PROGRESS = QColor(127, 140, 141)  # #7f8c8d
+    COLOR_TEXT_TIP = QColor(149, 165, 166)  # #95a5a6
+    COLOR_BG_TRANSLUCENT = QColor(245, 245, 245, 200)
+    
+    # Default tips
+    DEFAULT_TIPS = ["Organizing files...", "Analyzing content...", "Preparing your workspace..."]
+    
+    # Animation constants
+    SPINNER_UPDATE_MS = 30
+    TIP_ROTATION_MS = 5000
+    PULSE_ANIMATION_MS = 1800
+    DOT_ANIMATION_MS = 1000
+    FADE_IN_MS = 400
+    TIP_FADE_MS = 300
+    
+    # Number of segments in the progress ring (reduced for performance)
+    RING_SEGMENTS = 8
+    
+    @log_performance
     def __init__(self, parent: Optional[QWidget] = None, app_name: str = "File Organizer") -> None:
         super().__init__(parent)
         
@@ -23,91 +76,97 @@ class EnhancedLoadingScreen(QWidget):
         
         # Initialize state
         self.app_name = app_name
-        self.progress = 0  # 0-100
+        self.progress = 0
         self.progress_text = ""
-        self.tips = ["Organizing files...", "Analyzing content...", "Preparing your workspace..."]
+        self.tips = self.DEFAULT_TIPS.copy()
         self.current_tip_index = 0
         self._dots = 0
         self.angle = 0
         self._splash_opacity = 0.0
-        
-        # Initialize animation-related attributes
-        self._pulse_radius = self.pulse_min_radius if hasattr(self, 'pulse_min_radius') else 0
+        self._pulse_radius = 0
         self._pulse_opacity = 0.6
         
-        # Initialize dynamic layout calculations
+        # Cache for optimized rendering
+        self._center_point = None
+        self._container_rect = None
+        self._shadow_rect = None
+        self._cached_bg_gradient = None
+        self._cached_segment_path = None
+        self._cached_segment_paths = None
+        self._cached_pulse_colors = {}
+        
+        # Initialize layout, UI, and animations
         self._calculate_dimensions()
-        
-        # Set up the UI components
         self._setup_ui()
-        
-        # Set up animations
         self._setup_animations()
     
+    @log_performance
     def _calculate_dimensions(self) -> None:
-        """
-        Calculate all dimensions and spacing based on screen size and golden ratio principles.
-        This provides a mathematically pleasing layout that scales across different devices.
-        """
-        # Get screen dimensions
-        screen_rect = self.screen().geometry()
-        screen_width = screen_rect.width()
-        screen_height = screen_rect.height()
-        
-        # Calculate optimal base unit (1/60th of the smaller screen dimension)
-        # This ensures the base unit scales appropriately regardless of screen orientation
-        self.base_unit = min(screen_width, screen_height) / 60
-        
-        # Calculate golden ratio (approximately 1.618)
+        """Calculate all dimensions and spacing based on screen size and golden ratio principles."""
+        # Golden ratio for aesthetic proportions
         golden_ratio = (1 + 5 ** 0.5) / 2
         
-        # Apply golden ratio for aesthetic dimensions
+        # Get screen dimensions and calculate base unit
+        screen_rect = self.screen().geometry()
+        self.base_unit = min(screen_rect.width(), screen_rect.height()) / 60
+        
+        # Core dimensions
         self.progress_ring_radius = int(self.base_unit * 8)
         self.padding_vertical = int(self.base_unit * 4)
         self.padding_horizontal = int(self.base_unit * 4 * golden_ratio)
-        
-        # Define spacing using the base unit for consistency
         self.element_spacing = int(self.base_unit * 2)
         
-        # Define font sizes relative to base unit
+        # Font sizes
         self.title_font_size = max(int(self.base_unit * 3), 18)
         self.message_font_size = max(int(self.base_unit * 1.5), 12)
         
-        # Set container size using golden ratio
+        # Container dimensions
         container_width = int(self.progress_ring_radius * 2 * golden_ratio * 2)
         container_height = int(container_width / golden_ratio)
+        self.container_width = max(container_width, 300)
+        self.container_height = max(container_height, 200)
         
-        # Ensure minimum size
-        min_width = 300
-        min_height = 200
-        self.container_width = max(container_width, min_width)
-        self.container_height = max(container_height, min_height)
-        
-        # Set widget size (container + padding)
+        # Widget size
         self.setFixedSize(
             self.container_width + (self.padding_horizontal * 2),
             self.container_height + (self.padding_vertical * 2)
         )
         
-        # Calculate center point
-        self.center_x = self.width() / 2
-        self.center_y = self.height() / 2
-        
-        # Calculate progress bar dimensions
-        self.progress_bar_height = int(self.base_unit * 1)
+        # Progress bar dimensions
+        self.progress_bar_height = int(self.base_unit)
         self.progress_bar_width = int(self.container_width * 0.75)
         self.progress_bar_radius = int(self.progress_bar_height / 2)
         
-        # Calculate pulsing circle parameters
+        # Pulse circle parameters
         self.pulse_max_radius = self.progress_ring_radius * 1.5
         self.pulse_min_radius = self.progress_ring_radius * 1.2
         
-        # Calculate logo dimensions (if used)
+        # Logo dimensions (if used)
         self.logo_size = QSize(
             int(self.progress_ring_radius * 0.8), 
             int(self.progress_ring_radius * 0.8)
         )
+        
+        # Precalculate and cache common values for rendering
+        self._container_rect = None
+        self._shadow_rect = None
+        self._cached_bg_gradient = None
+        self._cached_segment_paths = None
+        self._center_point = None
     
+    def resizeEvent(self, event) -> None:
+        """Handle resize event to recalculate cached values."""
+        super().resizeEvent(event)
+        # Reset cached values when the widget is resized
+        self._center_point = None
+        self._container_rect = None
+        self._shadow_rect = None
+        self._cached_bg_gradient = None
+        self._cached_segment_path = None
+        self._cached_segment_paths = None
+        self._cached_pulse_colors = {}
+
+    @log_performance
     def _setup_ui(self) -> None:
         """Set up the UI components using the calculated dimensions."""
         # Main layout
@@ -121,6 +180,11 @@ class EnhancedLoadingScreen(QWidget):
         main_layout.setSpacing(self.element_spacing)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
+        # Create and setup labels
+        self._create_labels(main_layout)
+    
+    def _create_labels(self, layout) -> None:
+        """Create and configure all text labels."""
         # Title label
         self.title_label = QLabel(self.app_name)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -128,11 +192,11 @@ class EnhancedLoadingScreen(QWidget):
         font.setPointSize(self.title_font_size)
         font.setBold(True)
         self.title_label.setFont(font)
-        self.title_label.setStyleSheet(f"color: #2c3e50;")
-        main_layout.addWidget(self.title_label)
+        self.title_label.setStyleSheet(f"color: {self.COLOR_TEXT_TITLE.name()};")
+        layout.addWidget(self.title_label)
         
         # Spacer
-        main_layout.addSpacing(self.element_spacing)
+        layout.addSpacing(self.element_spacing)
         
         # Progress text label
         self.progress_label = QLabel("Loading...")
@@ -140,69 +204,52 @@ class EnhancedLoadingScreen(QWidget):
         msg_font = QFont()
         msg_font.setPointSize(self.message_font_size)
         self.progress_label.setFont(msg_font)
-        self.progress_label.setStyleSheet("color: #7f8c8d;")
-        main_layout.addWidget(self.progress_label)
+        self.progress_label.setStyleSheet(f"color: {self.COLOR_TEXT_PROGRESS.name()};")
+        layout.addWidget(self.progress_label)
         
-        # Tip label for user engagement
+        # Tip label
         self.tip_label = QLabel(self.tips[0])
         self.tip_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.tip_label.setFont(msg_font)
-        self.tip_label.setStyleSheet("color: #95a5a6; font-style: italic;")
-        main_layout.addWidget(self.tip_label)
+        self.tip_label.setStyleSheet(f"color: {self.COLOR_TEXT_TIP.name()}; font-style: italic;")
+        layout.addWidget(self.tip_label)
         
         # Apply fade effect to tip label
         self.tip_opacity = QGraphicsOpacityEffect(self.tip_label)
         self.tip_opacity.setOpacity(0.8)
         self.tip_label.setGraphicsEffect(self.tip_opacity)
     
+    @log_performance
     def _setup_animations(self) -> None:
         """Set up all animations for a dynamic user experience."""
         # Spinner rotation timer
         self.spinner_timer = QTimer(self)
         self.spinner_timer.timeout.connect(self._update_spinner)
-        self.spinner_timer.start(30)  # Smoother 30ms update
+        self.spinner_timer.start(self.SPINNER_UPDATE_MS)
         
-        # Pulsing circle animation
-        self.pulse_animation = QPropertyAnimation(self, b"pulseRadius", self)
-        self.pulse_animation.setDuration(1800)
-        self.pulse_animation.setStartValue(self.pulse_min_radius)
-        self.pulse_animation.setEndValue(self.pulse_max_radius)
-        self.pulse_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
-        self.pulse_animation.setLoopCount(-1)  # Infinite
-        
-        # Pulsing opacity animation
-        self.pulse_opacity_animation = QPropertyAnimation(self, b"pulseOpacity", self)
-        self.pulse_opacity_animation.setDuration(1800)
-        self.pulse_opacity_animation.setStartValue(0.6)
-        self.pulse_opacity_animation.setEndValue(0.0)
-        self.pulse_opacity_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
-        self.pulse_opacity_animation.setLoopCount(-1)  # Infinite
-        
-        # Dot animation
-        self.dot_animation = QPropertyAnimation(self, b"dots", self)
-        self.dot_animation.setDuration(1000)
-        self.dot_animation.setStartValue(0)
-        self.dot_animation.setEndValue(3)
-        self.dot_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
-        self.dot_animation.setLoopCount(-1)  # Infinite
+        # Create all animations
+        self._create_animation(b"pulseRadius", self.pulse_min_radius, self.pulse_max_radius, self.PULSE_ANIMATION_MS)
+        self._create_animation(b"pulseOpacity", 0.6, 0.0, self.PULSE_ANIMATION_MS)
+        self._create_animation(b"dots", 0, 3, self.DOT_ANIMATION_MS)
+        self._create_animation(b"splash_opacity", 0.0, 1.0, self.FADE_IN_MS, 
+                              easing=QEasingCurve.Type.OutCubic, loop=False)
         
         # Tip rotation timer
         self.tip_timer = QTimer(self)
         self.tip_timer.timeout.connect(self._rotate_tip)
-        self.tip_timer.start(5000)  # Change tip every 5 seconds
-        
-        # Start animations
-        self.pulse_animation.start()
-        self.pulse_opacity_animation.start()
-        self.dot_animation.start()
-        
-        # Fade-in animation for initial appearance
-        self.fade_in = QPropertyAnimation(self, b"splash_opacity", self)
-        self.fade_in.setDuration(400)
-        self.fade_in.setStartValue(0.0)
-        self.fade_in.setEndValue(1.0)
-        self.fade_in.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.fade_in.start()
+        self.tip_timer.start(self.TIP_ROTATION_MS)
+    
+    def _create_animation(self, property_name: bytes, start_value: float, end_value: float, 
+                          duration: int, easing=QEasingCurve.Type.InOutQuad, loop=True) -> None:
+        """Helper method to create and start an animation."""
+        animation = QPropertyAnimation(self, property_name, self)
+        animation.setDuration(duration)
+        animation.setStartValue(start_value)
+        animation.setEndValue(end_value)
+        animation.setEasingCurve(easing)
+        if loop:
+            animation.setLoopCount(-1)  # Infinite loop
+        animation.start()
     
     def _update_spinner(self) -> None:
         """Update spinner animation angle."""
@@ -211,27 +258,25 @@ class EnhancedLoadingScreen(QWidget):
     
     def _rotate_tip(self) -> None:
         """Rotate through tips with a fade transition."""
-        # Fade out current tip
+        # Create sequential animation for tip transition
+        sequence = QSequentialAnimationGroup(self)
+        
+        # Add fade-out, pause, and fade-in animations
         fade_out = QPropertyAnimation(self.tip_opacity, b"opacity", self)
-        fade_out.setDuration(300)
+        fade_out.setDuration(self.TIP_FADE_MS)
         fade_out.setStartValue(0.8)
         fade_out.setEndValue(0.0)
         fade_out.setEasingCurve(QEasingCurve.Type.OutQuad)
         
-        # Fade in new tip
         fade_in = QPropertyAnimation(self.tip_opacity, b"opacity", self)
-        fade_in.setDuration(300)
+        fade_in.setDuration(self.TIP_FADE_MS)
         fade_in.setStartValue(0.0)
         fade_in.setEndValue(0.8)
         fade_in.setEasingCurve(QEasingCurve.Type.InQuad)
         
-        # Create sequential animation
-        sequence = QSequentialAnimationGroup(self)
         sequence.addAnimation(fade_out)
-        sequence.addPause(100)  # Brief pause to show the change
+        sequence.addPause(100)
         sequence.addAnimation(fade_in)
-        
-        # Connect to property update
         sequence.finished.connect(self._update_tip_text)
         sequence.start()
     
@@ -279,17 +324,11 @@ class EnhancedLoadingScreen(QWidget):
     
     def _update_dots(self) -> None:
         """Update the loading text with animated dots."""
-        dots_text = "." * (self._dots)
+        dots_text = "." * self._dots
         self.progress_label.setText(f"{self.progress_text}{dots_text}")
     
     def set_progress(self, value: int, text: str = "") -> None:
-        """
-        Update the progress value and text.
-        
-        Args:
-            value: Progress value (0-100)
-            text: Optional text to display instead of percentage
-        """
+        """Update the progress value and text."""
         self.progress = max(0, min(100, value))  # Clamp between 0-100
         self.progress_text = text if text else f"Loading {self.progress}%"
         self._update_dots()
@@ -300,125 +339,172 @@ class EnhancedLoadingScreen(QWidget):
         if tip not in self.tips:
             self.tips.append(tip)
     
+    @log_performance
     def paintEvent(self, event: Any) -> None:
         """Custom paint event to render all visual elements."""
+        start_time = time.time()
+        
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        
+        # Cache center point for multiple drawing operations
+        if self._center_point is None:
+            self._center_point = QPointF(self.rect().center())
         
         # Apply global opacity for fade-in effect
         painter.setOpacity(self._splash_opacity)
         
         # Draw translucent background
-        bg_color = QColor(245, 245, 245, 200)
-        painter.fillRect(self.rect(), bg_color)
+        painter.fillRect(self.rect(), self.COLOR_BG_TRANSLUCENT)
         
         # Draw container with subtle shadow effect
+        container_time = time.time()
         self._draw_container(painter)
+        if ENABLE_PERF_LOGGING:
+            logger.debug(f'_draw_container took {(time.time() - container_time)*1000:.2f}ms')
         
-        # Draw pulsing background circle (for perceived activity)
-        if hasattr(self, "_pulse_radius") and hasattr(self, "_pulse_opacity"):
-            self._draw_pulse_circle(painter)
+        # Draw pulsing background circle
+        pulse_time = time.time()
+        self._draw_pulse_circle(painter)
+        if ENABLE_PERF_LOGGING:
+            logger.debug(f'_draw_pulse_circle took {(time.time() - pulse_time)*1000:.2f}ms')
         
         # Draw progress ring
+        ring_time = time.time()
         self._draw_progress_ring(painter)
+        if ENABLE_PERF_LOGGING:
+            logger.debug(f'_draw_progress_ring took {(time.time() - ring_time)*1000:.2f}ms')
         
         # Draw progress bar
+        bar_time = time.time()
         self._draw_progress_bar(painter)
+        if ENABLE_PERF_LOGGING:
+            logger.debug(f'_draw_progress_bar took {(time.time() - bar_time)*1000:.2f}ms')
+        
+        if ENABLE_PERF_LOGGING:
+            logger.debug(f'Total paintEvent took {(time.time() - start_time)*1000:.2f}ms')
     
     def _draw_container(self, painter: QPainter) -> None:
         """Draw the main container with shadow effect."""
-        # Calculate container rect
-        container_rect = self.rect().adjusted(
-            self.padding_horizontal, 
-            self.padding_vertical, 
-            -self.padding_horizontal, 
-            -self.padding_vertical
-        )
+        # Cache container rect calculations
+        if self._container_rect is None:
+            self._container_rect = self.rect().adjusted(
+                self.padding_horizontal, 
+                self.padding_vertical, 
+                -self.padding_horizontal, 
+                -self.padding_vertical
+            )
+            self._shadow_rect = self._container_rect.adjusted(2, 2, 2, 2)
         
-        # Draw subtle shadow (blurred rectangle)
-        shadow_color = QColor(0, 0, 0, 30)
-        shadow_rect = container_rect.adjusted(2, 2, 2, 2)
+        # Draw subtle shadow - simple and fast
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(shadow_color)
-        painter.drawRoundedRect(shadow_rect, self.base_unit, self.base_unit)
+        painter.setBrush(self.COLOR_SHADOW)
+        painter.drawRoundedRect(self._shadow_rect, self.base_unit, self.base_unit)
+        
+        # Cache and reuse gradient
+        if self._cached_bg_gradient is None:
+            self._cached_bg_gradient = QLinearGradient(
+                0, self._container_rect.top(), 0, self._container_rect.bottom()
+            )
+            self._cached_bg_gradient.setColorAt(0, self.COLOR_BG_LIGHT)
+            self._cached_bg_gradient.setColorAt(1, self.COLOR_BG_DARK)
         
         # Draw container background
-        bg_gradient = QLinearGradient(0, container_rect.top(), 0, container_rect.bottom())
-        bg_gradient.setColorAt(0, QColor(255, 255, 255, 240))
-        bg_gradient.setColorAt(1, QColor(248, 248, 248, 240))
-        
-        painter.setBrush(bg_gradient)
-        painter.setPen(QPen(QColor(220, 220, 220, 100), 1))
-        painter.drawRoundedRect(container_rect, self.base_unit, self.base_unit)
+        painter.setBrush(self._cached_bg_gradient)
+        painter.setPen(QPen(self.COLOR_BORDER, 1))
+        painter.drawRoundedRect(self._container_rect, self.base_unit, self.base_unit)
     
     def _draw_pulse_circle(self, painter: QPainter) -> None:
         """Draw the pulsing background circle for visual engagement."""
-        center = QPointF(self.rect().center())
+        # Use cached center point
+        center = self._center_point
         
-        # Create radial gradient for pulsing effect
+        # Check if we have this pulse color/opacity cached
+        opacity_key = f"{self._pulse_opacity:.2f}"
+        if opacity_key not in self._cached_pulse_colors:
+            # Create new pulse color with current opacity
+            pulse_color = QColor(self.COLOR_PRIMARY)
+            pulse_color.setAlphaF(self._pulse_opacity)
+            
+            # Pre-calculate mid and transparent colors
+            mid_color = QColor(pulse_color)
+            mid_color.setAlphaF(pulse_color.alphaF() * 0.5)
+            transparent = QColor(pulse_color)
+            transparent.setAlphaF(0)
+            
+            # Store in cache
+            self._cached_pulse_colors[opacity_key] = {
+                'main': pulse_color,
+                'mid': mid_color,
+                'transparent': transparent
+            }
+        
+        # Use cached colors
+        colors = self._cached_pulse_colors[opacity_key]
+        
+        # Create minimal radial gradient (only when needed)
         gradient = QRadialGradient(center, self._pulse_radius)
-        pulse_color = QColor(52, 152, 219, int(self._pulse_opacity * 255))
-        gradient.setColorAt(0, pulse_color)
-        gradient.setColorAt(0.7, QColor(pulse_color.red(), pulse_color.green(), pulse_color.blue(), int(pulse_color.alpha() * 0.5)))
-        gradient.setColorAt(1, QColor(pulse_color.red(), pulse_color.green(), pulse_color.blue(), 0))
+        gradient.setColorAt(0, colors['main'])
+        gradient.setColorAt(0.7, colors['mid'])
+        gradient.setColorAt(1, colors['transparent'])
         
+        # Draw with minimal state changes
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(gradient)
         painter.drawEllipse(center, self._pulse_radius, self._pulse_radius)
     
     def _draw_progress_ring(self, painter: QPainter) -> None:
         """Draw the circular progress indicator with rotating segments."""
-        center = self.rect().center()
+        # Use cached center point instead of recalculating
+        center = self._center_point.toPoint()
         
         # Save painter state
         painter.save()
         painter.translate(center)
         
-        # Calculate arc dimensions
+        # Calculate arc dimensions - only once
         outer_radius = self.progress_ring_radius
         inner_radius = int(outer_radius * 0.75)
-        segment_width = (outer_radius - inner_radius) / 2
         
-        # Define colors
-        primary_color = QColor(52, 152, 219)  # Blue
-        secondary_color = QColor(46, 204, 113)  # Green
-        tertiary_color = QColor(155, 89, 182)  # Purple
+        # Define segment colors
+        colors = [self.COLOR_PRIMARY, self.COLOR_SECONDARY, self.COLOR_TERTIARY]
         
-        # Draw 12 segments with varying opacity
-        for i in range(12):
-            # Rotate to segment position
-            segment_angle = i * 30
-            adjusted_angle = (segment_angle + self.angle) % 360
+        # Create cached segment paths if not already created
+        if self._cached_segment_paths is None:
+            self._cached_segment_paths = []
             
-            # Calculate opacity based on position (brightest at top)
-            opacity = 0.3 + 0.7 * (1 - abs((adjusted_angle % 360) - 180) / 180)
-            
-            # Determine segment color
-            color_index = i % 3
-            if color_index == 0:
-                color = primary_color
-            elif color_index == 1:
-                color = secondary_color
-            else:
-                color = tertiary_color
-            
-            # Apply opacity
-            color.setAlphaF(opacity)
-            
-            # Draw segment
-            painter.rotate(30)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(color)
-            
-            # Create segment path
+            # Pre-compute segment path template
             segment_path = QPainterPath()
             segment_path.arcMoveTo(-outer_radius, -outer_radius, outer_radius * 2, outer_radius * 2, -15)
             segment_path.arcTo(-outer_radius, -outer_radius, outer_radius * 2, outer_radius * 2, -15, 30)
             segment_path.arcTo(-inner_radius, -inner_radius, inner_radius * 2, inner_radius * 2, 15, -30)
             segment_path.closeSubpath()
+            self._cached_segment_path = segment_path
             
-            # Draw the segment
-            painter.drawPath(segment_path)
+            # Pre-calculate rotations for each segment
+            segment_angle = 360 / self.RING_SEGMENTS
+            for i in range(self.RING_SEGMENTS):
+                rotation = i * segment_angle
+                path = QPainterPath(self._cached_segment_path)
+                transform = painter.transform()
+                transform.rotate(rotation)
+                path = transform.map(path)
+                self._cached_segment_paths.append((path, i))
+        
+        # Use fewer segments for better performance
+        for path, i in self._cached_segment_paths:
+            # Calculate segment position and opacity
+            adjusted_angle = ((i * (360 / self.RING_SEGMENTS)) + self.angle) % 360
+            opacity = 0.3 + 0.7 * (1 - abs((adjusted_angle % 360) - 180) / 180)
+            
+            # Apply color with opacity
+            color = QColor(colors[i % 3])
+            color.setAlphaF(opacity)
+            
+            # Draw segment
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawPath(path)
         
         painter.restore()
     
@@ -426,65 +512,76 @@ class EnhancedLoadingScreen(QWidget):
         """Draw the horizontal progress bar below the spinner."""
         if self.progress <= 0:
             return  # Don't draw if no progress
-            
+        
+        # Cache the center point
+        center = self._center_point
+        
         # Calculate progress bar position
-        center = self.rect().center()
         bar_top = center.y() + self.progress_ring_radius + self.element_spacing * 2
         bar_left = center.x() - (self.progress_bar_width / 2)
         
+        # Convert to integers for faster drawing
+        bar_top_int = int(bar_top)
+        bar_left_int = int(bar_left)
+        
         # Draw background track
         track_rect = QRect(
-            int(bar_left),
-            int(bar_top),
+            bar_left_int,
+            bar_top_int,
             self.progress_bar_width,
             self.progress_bar_height
         )
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(220, 220, 220, 150))
+        painter.setBrush(self.COLOR_TRACK)
         painter.drawRoundedRect(track_rect, self.progress_bar_radius, self.progress_bar_radius)
         
-        # Draw filled portion
+        # Draw filled portion if we have progress
         if self.progress > 0:
             fill_width = int(self.progress_bar_width * (self.progress / 100))
             fill_rect = QRect(
-                int(bar_left),
-                int(bar_top),
+                bar_left_int,
+                bar_top_int,
                 fill_width,
                 self.progress_bar_height
             )
             
-            # Create gradient for filled portion
+            # Create gradient for filled portion - simple with only 2 color stops
             gradient = QLinearGradient(
                 fill_rect.left(), fill_rect.top(),
                 fill_rect.right(), fill_rect.top()
             )
-            gradient.setColorAt(0, QColor(52, 152, 219))  # Blue
-            gradient.setColorAt(1, QColor(46, 204, 113))  # Green
+            gradient.setColorAt(0, self.COLOR_PRIMARY)
+            gradient.setColorAt(1, self.COLOR_SECONDARY)
             
             painter.setBrush(gradient)
             painter.drawRoundedRect(fill_rect, self.progress_bar_radius, self.progress_bar_radius)
+            
+            # Draw percentage text
+            self._draw_percentage_text(painter, bar_left, bar_top)
+    
+    def _draw_percentage_text(self, painter: QPainter, bar_left: float, bar_top: float) -> None:
+        """Draw the percentage text below the progress bar."""
+        painter.setPen(QColor(50, 50, 50, 200))
+        percentage_font = QFont()
+        percentage_font.setPointSize(int(self.message_font_size * 0.8))
+        painter.setFont(percentage_font)
         
-        # Draw percentage text if progress is significant
-        if self.progress > 5:
-            painter.setPen(QColor(50, 50, 50, 200))
-            percentage_font = QFont()
-            percentage_font.setPointSize(int(self.message_font_size * 0.8))
-            painter.setFont(percentage_font)
-            
-            percentage_text = f"{self.progress}%"
-            metrics = QFontMetrics(percentage_font)
-            text_width = metrics.horizontalAdvance(percentage_text)
-            text_height = metrics.height()
-            
-            # Position text in the center of the bar
-            text_x = bar_left + (self.progress_bar_width - text_width) / 2
-            text_y = bar_top + self.progress_bar_height + text_height
-            
-            painter.drawText(QPointF(text_x, text_y), percentage_text)
+        percentage_text = f"{self.progress}%"
+        metrics = QFontMetrics(percentage_font)
+        text_width = metrics.horizontalAdvance(percentage_text)
+        text_height = metrics.height()
+        
+        # Position text in the center of the bar
+        text_x = bar_left + (self.progress_bar_width - text_width) / 2
+        text_y = bar_top + self.progress_bar_height + text_height
+        
+        painter.drawText(QPointF(text_x, text_y), percentage_text)
+
 
 # Example of how to use the enhanced loading screen
 class LoadingScreenDemo:
     @staticmethod
+    @log_performance
     def create_and_show_loading_screen(parent=None, app_name="File Organizer") -> EnhancedLoadingScreen:
         """Create and show a loading screen with a simulated loading process."""
         loading_screen = EnhancedLoadingScreen(parent, app_name)

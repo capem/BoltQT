@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QStatusBar,
     QWidget,
     QVBoxLayout,
+    QMessageBox
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -29,13 +30,17 @@ class MainWindow(QMainWindow):
         self.loading_screen = loading_screen
         
         # Initialize managers
-        self.loading_screen.set_progress(10, "Initializing managers...")
+        self.loading_screen.set_progress(25, "Initializing configuration manager...")
         self.config_manager = ConfigManager()
+        
+        self.loading_screen.set_progress(35, "Initializing Excel manager...")
         self.excel_manager = ExcelManager()
+        
+        self.loading_screen.set_progress(45, "Initializing PDF manager...")
         self.pdf_manager = PDFManager()
         
         # Set window properties
-        self.setWindowTitle("File Organizer")
+        self.loading_screen.set_progress(50, "Setting up main window...")
         self.setMinimumSize(1200, 800)
         
         # Create central widget and layout
@@ -64,7 +69,7 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(message)
         
         # Create tabs
-        self.loading_screen.set_progress(30, "Creating tabs...")
+        self.loading_screen.set_progress(60, "Creating configuration tab...")
         self.config_tab = ConfigTab(
             self.config_manager,
             self.excel_manager,
@@ -72,6 +77,7 @@ class MainWindow(QMainWindow):
             handle_status
         )
         
+        self.loading_screen.set_progress(75, "Creating processing tab...")
         self.processing_tab = ProcessingTab(
             self.config_manager,
             self.excel_manager,
@@ -81,6 +87,7 @@ class MainWindow(QMainWindow):
         )
         
         # Add tabs
+        self.loading_screen.set_progress(85, "Finalizing UI setup...")
         self.tab_widget.addTab(self.config_tab, "Configuration")
         self.tab_widget.addTab(self.processing_tab, "Processing")
         
@@ -95,25 +102,48 @@ def main() -> None:
     # Set application-wide style
     app.setStyle("Fusion")
     
+    # Application name - define once for consistency
+    app_name = "BoltQT"
+    
     # Create and show loading screen first
-    loading_screen = EnhancedLoadingScreen(app_name="File Organizer")
+    loading_screen = EnhancedLoadingScreen(app_name=app_name)
+    
+    # Add relevant tips for loading phases
+    loading_screen.add_tip("Initializing application...")
+    loading_screen.add_tip("Loading configuration...")
+    loading_screen.add_tip("Preparing document processing...")
+    loading_screen.add_tip("Setting up UI components...")
+    
+    # Show the loading screen
     loading_screen.show()
+    loading_screen.set_progress(5, "Starting application...")
     
-    # Center the loading screen
-    screen = app.primaryScreen().availableGeometry()
-    loading_screen.move(
-        (screen.width() - loading_screen.width()) // 2,
-        (screen.height() - loading_screen.height()) // 2
-    )
-    
-    # Process any pending events to ensure the loading screen is shown
-    app.processEvents()
-    
-    # Create and show main window
-    window = MainWindow(loading_screen)
-    window.show()
-    
-    sys.exit(app.exec())
+    try:
+        # Initialize main window with loading screen
+        loading_screen.set_progress(20, "Creating main window...")
+        main_window = MainWindow(loading_screen)
+        main_window.setWindowTitle(app_name)  # Use same app name for consistency
+        
+        # Position window in center of screen
+        screen_geometry = app.primaryScreen().availableGeometry()
+        x = (screen_geometry.width() - main_window.width()) // 2
+        y = (screen_geometry.height() - main_window.height()) // 2
+        main_window.move(x, y)
+        
+        # Show main window and enter Qt's event loop
+        loading_screen.set_progress(90, "Ready to launch...")
+        main_window.show()
+        
+        # Return code from app execution
+        return app.exec()
+    except Exception as e:
+        # Handle initialization errors
+        import traceback
+        error_msg = f"Error during startup: {str(e)}\n{traceback.format_exc()}"
+        loading_screen.set_progress(100, "Error encountered!")
+        # Display error in loading screen
+        QMessageBox.critical(None, "Startup Error", error_msg)
+        return 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
