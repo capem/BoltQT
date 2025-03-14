@@ -95,8 +95,8 @@ class MainWindow(QMainWindow):
         self.loading_screen.set_progress(100, "Ready!")
         QTimer.singleShot(500, self.loading_screen.hide)
 
-def main() -> None:
-    """Main entry point of the application."""
+def main() -> int:
+    # Create application first
     app = QApplication(sys.argv)
     
     # Set application-wide style
@@ -118,6 +118,9 @@ def main() -> None:
     loading_screen.show()
     loading_screen.set_progress(5, "Starting application...")
     
+    # Process events to ensure loading screen appears before proceeding
+    app.processEvents()
+    
     try:
         # Initialize main window with loading screen
         loading_screen.set_progress(20, "Creating main window...")
@@ -132,7 +135,9 @@ def main() -> None:
         
         # Show main window and enter Qt's event loop
         loading_screen.set_progress(90, "Ready to launch...")
-        main_window.show()
+        main_window.showMaximized()  # Open the window maximized
+        main_window.activateWindow()  # Make sure the window takes focus
+        main_window.raise_()  # Bring window to front
         
         # Return code from app execution
         return app.exec()
