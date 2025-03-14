@@ -5,6 +5,10 @@ import os
 import pandas as pd
 from openpyxl import load_workbook
 from PyQt6.QtCore import QObject
+from shutil import copy2
+from os import path, remove
+import traceback
+
 class ExcelManager(QObject):
     """Manages Excel file operations and data caching."""
     
@@ -423,36 +427,206 @@ class ExcelManager(QObject):
             Tuple[Dict[str, Any], int]: Dictionary of row data and the row index
         """
         try:
-            # Load workbook
-            wb = load_workbook(file_path)
-            ws = wb[sheet_name]
+            print(f"[DEBUG] Cache state before adding new row - size: {len(self._hyperlink_cache)}")
             
-            # Find column indices
-            header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
-            col_indices = []
-            for col in columns:
-                if col not in header:
-                    raise ValueError(f"Column '{col}' not found")
-                col_indices.append(header[col])
+            # Validate input
+            if len(columns) != len(values):
+                raise ValueError(f"Number of columns ({len(columns)}) and values ({len(values)}) must match")
+                
+            print(f"[DEBUG] Adding new row with values: {dict(zip(columns, values))}")
             
-            # Add new row
-            new_row = ws.max_row + 1
-            for col_idx, value in zip(col_indices, values):
-                cell = ws.cell(row=new_row, column=col_idx)
-                cell.value = value
+            # Create a backup
+            backup_file = file_path + ".bak"
+            copy2(file_path, backup_file)
+            print(f"[DEBUG] Created backup at {backup_file}")
             
-            # Save workbook
-            wb.save(file_path)
-            
-            # Reload Excel data
-            self.load_excel_data(file_path, sheet_name)
-            
-            # Get row data
-            row_idx = new_row - 2  # Convert to 0-based index
-            row_data = self.excel_data.iloc[row_idx].to_dict()
-            
-            return row_data, row_idx
-            
+            try:
+                # Load workbook
+                wb = load_workbook(file_path)
+                ws = wb[sheet_name]
+                
+                # Get header row
+                header_row = ws[1]
+                col_indices = {cell.value: idx + 1 for idx, cell in enumerate(header_row)}
+                
+                # Verify all filter columns exist
+                for col in columns:
+                    if col not in col_indices:
+                        raise ValueError(f"Column '{col}' not found in Excel file. Available columns: {', '.join(col_indices.keys())}")
+                
+                # Find the first table's range to determine where to add the new row
+                table_end_row = None
+                for table in ws.tables.values():
+                    try:
+                        current_ref = table.ref
+                        ref_parts = current_ref.split(':')
+                        if len(ref_parts) == 2:
+                            end_ref = ref_parts[1]
+                            table_end_row = int(''.join(filter(str.isdigit, end_ref)))
+                            print(f"[DEBUG] Found table with end row: {table_end_row}")
+                            break  # Use the first table found
+                    except Exception as e:
+                        print(f"[DEBUG] Error processing table reference: {str(e)}")
+                        continue
+                
+                # If we found a table, add the row immediately after it
+                if table_end_row:
+                    new_row = table_end_row + 1
+                else:
+                    # Fallback to adding at the end if no table found
+                    new_row = ws.max_row + 1
+                    
+                print(f"[DEBUG] Adding row at index {new_row - 2} (Excel row {new_row})")
+                
+                # First pass: Copy all formats from the template row (use row before new row)
+                template_row = new_row - 1
+                print(f"[DEBUG] Using template row {template_row} for formatting")
+                
+                for col_idx in range(1, len(header_row) + 1):
+                    template_cell = ws.cell(row=template_row, column=col_idx)
+                    new_cell = ws.cell(row=new_row, column=col_idx)
+                    # Copy number format and style
+                    new_cell.number_format = template_cell.number_format
+                    new_cell._style = template_cell._style
+                
+                # Second pass: Set values with proper type conversion
+                for col, val in zip(columns, values):
+                    col_idx = col_indices[col]
+                    template_cell = ws.cell(row=template_row, column=col_idx)
+                    new_cell = ws.cell(row=new_row, column=col_idx)
+                    
+                    # Convert value based on the column type
+                    if "DATE" in col.upper() and val:
+                        try:
+                            # Try to parse date in various formats
+                            date_formats = ['%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d', '%Y/%m/%d']
+                            date_val = None
+                            
+                            for fmt in date_formats:
+                                try:
+                                    from datetime import datetime
+                                    date_val = datetime.strptime(val, fmt)
+                                    break
+                                except ValueError:
+                                    continue
+                                    
+                            if date_val:
+                                new_cell.value = date_val
+                                new_cell.number_format = 'DD/MM/YYYY'
+                            else:
+                                # Fallback to pandas datetime parsing
+                                date_val = pd.to_datetime(val)
+                                new_cell.value = date_val.to_pydatetime()
+                                new_cell.number_format = 'DD/MM/YYYY'
+                        except Exception as e:
+                            print(f"[DEBUG] Could not parse date '{val}' for column '{col}': {str(e)}")
+                            new_cell.value = val
+                    elif "MNT" in col.upper() or "MONTANT" in col.upper():
+                        try:
+                            # Handle number format (comma as decimal separator)
+                            if isinstance(val, str):
+                                # Replace comma with dot for conversion, handle thousands separator
+                                num_str = val.replace(' ', '').replace(',', '.')
+                                num_val = float(num_str)
+                                new_cell.value = num_val
+                            else:
+                                new_cell.value = float(val)
+                        except (ValueError, TypeError):
+                            new_cell.value = val
+                            print(f"[DEBUG] Could not parse number '{val}' for column '{col}'")
+                    else:
+                        new_cell.value = val
+                        
+                    print(f"[DEBUG] Set value '{val}' for column '{col}'")
+                
+                # Check and expand table ranges to include the new row
+                if table_end_row:
+                    print("[DEBUG] Checking for tables that need to be expanded")
+                    for table in ws.tables.values():
+                        try:
+                            current_ref = table.ref
+                            # Split table reference into components (e.g., 'A1:D10' -> ['A1', 'D10'])
+                            ref_parts = current_ref.split(':')
+                            if len(ref_parts) != 2:
+                                continue
+                                
+                            start_ref, end_ref = ref_parts
+                            
+                            # Extract row numbers from references
+                            start_row = int(''.join(filter(str.isdigit, start_ref)))
+                            end_row = int(''.join(filter(str.isdigit, end_ref)))
+                            
+                            # Check if new row is immediately after table
+                            if end_row == new_row - 1:
+                                # Get column letters from references (e.g., 'A' from 'A1')
+                                start_col = ''.join(filter(str.isalpha, start_ref))
+                                end_col = ''.join(filter(str.isalpha, end_ref))
+                                
+                                # Create new reference that includes the new row
+                                new_ref = f"{start_col}{start_row}:{end_col}{new_row}"
+                                table.ref = new_ref
+                                print(f"[DEBUG] Expanded table '{table.displayName}' range to {new_ref}")
+                        except Exception as table_e:
+                            print(f"[DEBUG] Error expanding table: {str(table_e)}")
+                            # Continue with other tables even if one fails
+                            continue
+                
+                # Save workbook
+                wb.save(file_path)
+                
+                # Update cache for the new row
+                self._hyperlink_cache[new_row - 2] = False
+                
+                # Create a row data dictionary that includes all the values
+                row_data = {}
+                if self.excel_data is not None:
+                    # Create data for all columns (initialize with None)
+                    for col in self.excel_data.columns:
+                        row_data[col] = None
+                    
+                    # Update with the values we have
+                    for col, val in zip(columns, values):
+                        row_data[col] = val
+                    
+                    # Add the new row to our DataFrame
+                    self.excel_data = pd.concat([self.excel_data, pd.DataFrame([row_data])], ignore_index=True)
+                    
+                    # Row index is the last row (0-based)
+                    row_idx = len(self.excel_data) - 1
+                else:
+                    # If DataFrame doesn't exist yet, reload from Excel
+                    self.load_excel_data(file_path, sheet_name)
+                    # Get the new row index (Excel row minus header and 1-based index)
+                    row_idx = new_row - 2
+                    # Get row data
+                    if row_idx < len(self.excel_data):
+                        row_data = self.excel_data.iloc[row_idx].to_dict()
+                    else:
+                        # Manual construction if row index is out of bounds
+                        row_data = {col: val for col, val in zip(columns, values)}
+                
+                # Remove backup after successful write
+                if path.exists(backup_file):
+                    remove(backup_file)
+                    print("[DEBUG] Removed backup file after successful write")
+                
+                print(f"[DEBUG] Successfully added new row at index {row_idx}")
+                return row_data, row_idx
+                
+            finally:
+                if 'wb' in locals():
+                    wb.close()
+                
         except Exception as e:
             print(f"[DEBUG] Error adding new row: {str(e)}")
+            print(f"[DEBUG] Error details: {traceback.format_exc()}")
+            
+            # Try to restore from backup
+            if 'backup_file' in locals() and path.exists(backup_file):
+                try:
+                    copy2(backup_file, file_path)
+                    print("[DEBUG] Restored from backup after error")
+                except Exception as backup_e:
+                    print(f"[DEBUG] Failed to restore from backup: {str(backup_e)}")
+            
             raise

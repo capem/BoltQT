@@ -88,7 +88,7 @@ class ProcessingThread(QThread):
                 
                 # Find row index efficiently
                 try:
-                    row_idx = self._find_matching_row(df, filter_columns, filter_values)
+                    row_idx = self._find_matching_row(df, filter_columns, filter_values, task_to_process)
                 except Exception as e:
                     print(f"[DEBUG] Error finding matching row: {str(e)}")
                     raise Exception(f"Could not find matching Excel row: {str(e)}")
@@ -97,6 +97,18 @@ class ProcessingThread(QThread):
                 task_to_process.row_idx = row_idx
                 
                 # Extract and validate row data
+                if row_idx >= len(df):
+                    print(f"[DEBUG] Row index {row_idx} is out of bounds (df length: {len(df)}). Reloading Excel data.")
+                    # Reload Excel data to ensure we have the latest
+                    excel_manager.load_excel_data(config["excel_file"], config["excel_sheet"])
+                    df = excel_manager.excel_data
+                    # Update cache
+                    self._excel_data_cache['data'] = df
+                    
+                    # Check again after reload
+                    if row_idx >= len(df):
+                        raise Exception(f"Row index {row_idx} is still out of bounds after reloading Excel data (df length: {len(df)})")
+                
                 row_data = df.iloc[row_idx]
                 try:
                     self._validate_row_data(row_data, filter_columns, filter_values)
@@ -105,7 +117,7 @@ class ProcessingThread(QThread):
                     raise Exception(f"Row data validation failed: {str(e)}")
                 
                 # Create template data from row data efficiently
-                template_data = self._create_template_data(row_data, filter_columns, filter_values)
+                template_data = self._create_template_data(row_data, filter_columns, filter_values, row_idx)
                 
                 # Add processed_folder to template data
                 template_data["processed_folder"] = config["processed_folder"]
@@ -210,10 +222,24 @@ class ProcessingThread(QThread):
             filter_columns.append(config[column_key])
         return filter_columns
     
-    def _find_matching_row(self, df, filter_columns, filter_values):
+    def _find_matching_row(self, df, filter_columns, filter_values, task=None):
         """Find the matching row in Excel data based on filter values."""
         if len(filter_values) < 2 or len(filter_columns) < 2:
             raise Exception("At least two filter values are required")
+        
+        # Check if the task already has a valid row_idx set
+        if task and task.row_idx >= 0 and task.row_idx < len(df):
+            # Verify that the row contains the expected filter2 value
+            filter2_column = filter_columns[1]
+            filter2_value = filter_values[1]
+            actual_value = str(df.iloc[task.row_idx][filter2_column])
+            
+            if actual_value == filter2_value:
+                print(f"[DEBUG] Using pre-set task row_idx {task.row_idx} (Excel row {task.row_idx + 2})")
+                return task.row_idx
+            else:
+                print(f"[DEBUG] Pre-set row_idx {task.row_idx} does not match filter2 value. Expected: {filter2_value}, Got: {actual_value}")
+                # Continue with normal processing since the row doesn't match
         
         # Get filter2 value - if it has Excel row info, extract it
         filter2_value = filter_values[1]
@@ -234,71 +260,116 @@ class ProcessingThread(QThread):
                     row_idx = extracted_row_idx
                     filter2_value = clean_value
                     filter_values[1] = clean_value  # Replace with clean value for further processing
-        else:
-            print(f"[DEBUG] Using direct filter2 value (no row info): {filter2_value}")
-        
-        # If we already have a valid row index from the formatted value, verify it
-        if row_idx >= 0:
-            # Verify that the row contains the expected filter2 value
-            if row_idx < len(df):
-                filter2_column = filter_columns[1]
-                actual_value = str(df.iloc[row_idx][filter2_column])
-                if actual_value == filter2_value:
-                    print(f"[DEBUG] Found matching row at index {row_idx} with value {filter2_value}")
-                    return row_idx
+                    
+            # If we have a valid row index from the formatted value, verify it
+            if row_idx >= 0:
+                # Verify that the row contains the expected filter2 value
+                if row_idx < len(df):
+                    filter2_column = filter_columns[1]
+                    actual_value = str(df.iloc[row_idx][filter2_column])
+                    if actual_value == filter2_value:
+                        print(f"[DEBUG] Found matching row at index {row_idx}")
+                        return row_idx
+                    else:
+                        print(f"[DEBUG] Row index {row_idx} does not match filter2 value. Expected: {filter2_value}, Got: {actual_value}")
                 else:
-                    print(f"[DEBUG] Row index {row_idx} does not match filter2 value. Expected: {filter2_value}, Got: {actual_value}")
-            else:
-                print(f"[DEBUG] Row index {row_idx} is out of bounds (df length: {len(df)})")
-        
-        # Fallback: search for matching rows using filter2 value
-        filter2_column = filter_columns[1]
-        print(f"[DEBUG] Searching for rows with filter2 value: '{filter2_value}' in column '{filter2_column}'")
-        
-        # Use vectorized operations for better performance
-        matching_mask = df[filter2_column].astype(str) == filter2_value
-        matching_rows = df[matching_mask]
-        
-        matching_count = len(matching_rows)
-        print(f"[DEBUG] Found {matching_count} matching rows for filter2 value")
-        
-        if matching_count == 0:
-            raise Exception(f"Could not find Excel row matching filter value: {filter2_value}")
+                    print(f"[DEBUG] Row index {row_idx} is out of bounds (df length: {len(df)})")
+                    
+            # If row index from formatted value doesn't work, fall back to search
+            filter2_column = filter_columns[1]
+            print(f"[DEBUG] Searching for rows with filter2 value: '{filter2_value}' in column '{filter2_column}'")
             
-        if matching_count == 1:
-            # Found exactly one match
+            # Use vectorized operations for better performance
+            matching_mask = df[filter2_column].astype(str) == filter2_value
+            matching_rows = df[matching_mask]
+            
+            matching_count = len(matching_rows)
+            print(f"[DEBUG] Found {matching_count} matching rows for filter2 value")
+            
+            if matching_count == 0:
+                raise Exception(f"Could not find Excel row matching filter value: {filter2_value}")
+                
+            if matching_count == 1:
+                # Found exactly one match
+                row_idx = matching_rows.index[0]
+                print(f"[DEBUG] Found unique matching row at index {row_idx}")
+                return row_idx
+                
+            # Multiple matches - try to narrow down using other filters
+            print(f"[DEBUG] Found multiple matches, narrowing down with other filters")
+            # Start with all matching rows from filter2
+            multi_filter_mask = matching_mask.copy()
+            
+            # Apply additional filters
+            for i, (col, val) in enumerate(zip(filter_columns, filter_values)):
+                if i != 1:  # Skip filter2 which we already used
+                    print(f"[DEBUG] Applying additional filter: {col}={val}")
+                    multi_filter_mask &= (df[col].astype(str) == str(val))
+                    narrowed_count = multi_filter_mask.sum()
+                    print(f"[DEBUG] After filter {i+1}, {narrowed_count} matches remain")
+                    # Check if we have a unique match after adding this filter
+                    if narrowed_count == 1:
+                        row_idx = df[multi_filter_mask].index[0]
+                        print(f"[DEBUG] Found unique matching row at index {row_idx} after applying all filters")
+                        return row_idx
+            
+            # If we still have multiple matches, use the first one
+            if multi_filter_mask.sum() > 0:
+                row_idx = df[multi_filter_mask].index[0]
+                print(f"[DEBUG] Using first of multiple matches at index {row_idx}")
+                return row_idx
+                
+            # Fall back to the first match from filter2 if the combined filters yielded no results
             row_idx = matching_rows.index[0]
-            print(f"[DEBUG] Found unique matching row at index {row_idx}")
+            print(f"[DEBUG] Falling back to first filter2 match at index {row_idx}")
             return row_idx
-            
-        # Multiple matches - try to narrow down using other filters
-        print(f"[DEBUG] Found multiple matches, narrowing down with other filters")
-        # Start with all matching rows from filter2
-        multi_filter_mask = matching_mask.copy()
-        
-        # Apply additional filters
-        for i, (col, val) in enumerate(zip(filter_columns, filter_values)):
-            if i != 1:  # Skip filter2 which we already used
-                print(f"[DEBUG] Applying additional filter: {col}={val}")
-                multi_filter_mask &= (df[col].astype(str) == str(val))
-                narrowed_count = multi_filter_mask.sum()
-                print(f"[DEBUG] After filter {i+1}, {narrowed_count} matches remain")
-                # Check if we have a unique match after adding this filter
-                if narrowed_count == 1:
-                    row_idx = df[multi_filter_mask].index[0]
-                    print(f"[DEBUG] Found unique matching row at index {row_idx} after applying all filters")
-                    return row_idx
-        
-        # If we still have multiple matches, use the first one
-        if multi_filter_mask.sum() > 0:
-            row_idx = df[multi_filter_mask].index[0]
-            print(f"[DEBUG] Using first of multiple matches at index {row_idx}")
-            return row_idx
-            
-        # Fall back to the first match from filter2 if the combined filters yielded no results
-        row_idx = matching_rows.index[0]
-        print(f"[DEBUG] Falling back to first filter2 match at index {row_idx}")
-        return row_idx
+        else:
+            # No Excel row specified in the filter2 value, automatically add a new row
+            print(f"[DEBUG] Using direct filter2 value (no row info): {filter2_value}")
+            print(f"[DEBUG] No Excel row specified - automatically adding new row")
+            try:
+                # Get configuration
+                config = {}
+                if parent and hasattr(parent, 'config_manager'):
+                    config = parent.config_manager.get_config()
+                
+                # Create a new row with the filter values
+                filter_values_copy = filter_values.copy()
+                filter_values_copy[1] = filter2_value  # Use the raw value without formatting
+                
+                # Use the excel manager to add the new row
+                excel_manager = None
+                if parent and hasattr(parent, 'excel_manager'):
+                    excel_manager = parent.excel_manager
+                elif hasattr(self, 'excel_manager'):
+                    excel_manager = self.excel_manager
+                
+                if not excel_manager:
+                    raise Exception("Excel manager not available")
+                
+                new_row_data, new_row_idx = excel_manager.add_new_row(
+                    config["excel_file"],
+                    config["excel_sheet"],
+                    filter_columns,
+                    filter_values_copy
+                )
+                
+                # Update row_idx with the new row information
+                row_idx = new_row_idx
+                
+                # Update the cached DataFrame to include the new row
+                # This ensures df.iloc[row_idx] will work after adding a new row
+                self._excel_data_cache['data'] = excel_manager.excel_data
+                
+                # Update filter2 value with formatted value including row info
+                if parent and hasattr(parent, '_format_filter2_value'):
+                    filter_values[1] = parent._format_filter2_value(filter2_value, row_idx, False)
+                
+                print(f"[DEBUG] Added new row {row_idx} for filter2 value '{filter2_value}'")
+                return row_idx
+            except Exception as e:
+                print(f"[DEBUG] Failed to automatically add new row: {str(e)}")
+                raise Exception(f"Failed to automatically add new row for filter value: {filter2_value}. Error: {str(e)}")
     
     def _validate_row_data(self, row_data, filter_columns, filter_values):
         """Validate that row data matches filter values."""
@@ -401,14 +472,35 @@ class ProcessingThread(QThread):
         # Fall back to string representation
         return str(value).strip()
     
-    def _create_template_data(self, row_data, filter_columns, filter_values):
-        """Create template data dict from row data efficiently."""
+    def _create_template_data(self, row_data, filter_columns, filter_values, row_idx=None):
+        """Create template data dict from row data efficiently.
+        
+        Args:
+            row_data: Excel row data
+            filter_columns: List of column names for filters
+            filter_values: List of filter values
+            row_idx: Optional row index (0-based)
+            
+        Returns:
+            Dict with template data
+        """
         template_data = {}
         date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d"]
         
         # Add filter values to template data
         for i, (column, value) in enumerate(zip(filter_columns, filter_values), 1):
-            template_data[f"filter{i}"] = value
+            # For filter2, include Excel row in the value
+            if i == 2 and row_idx is not None:
+                parent = self.parent()
+                if parent and hasattr(parent, '_format_filter2_value'):
+                    excel_row = row_idx + 2  # Convert to Excel row (1-based + header)
+                    formatted_value = value + f" ⟨Excel Row: {excel_row}⟩"
+                    template_data[f"filter{i}"] = formatted_value
+                else:
+                    template_data[f"filter{i}"] = value
+            else:
+                template_data[f"filter{i}"] = value
+                
             template_data[column] = value
             
             # Try to convert date string values to datetime objects
@@ -805,9 +897,8 @@ class ProcessingTab(QWidget):
             
             # Get values for the current filter
             column = self.filter_frames[filter_index]["column"]
-            values = sorted(filtered_df[column].astype(str).unique().tolist())
             
-            # For filter2, add row information and checkmark for hyperlinks
+            # Special handling for filter2 - show ALL rows, not just unique values
             if filter_index == 1:
                 # Cache hyperlinks for the filter2 column
                 self.excel_manager.cache_hyperlinks_for_column(
@@ -816,22 +907,22 @@ class ProcessingTab(QWidget):
                     column
                 )
                 
-                # Format values with row information and hyperlink status
+                # Get all rows from filtered_df, not just unique values
                 formatted_values = []
-                for value in values:
-                    # Find row index in the original dataframe
-                    matches = df[df[column].astype(str) == value]
-                    if matches.empty:
-                        formatted_values.append(value)
-                        continue
-                        
-                    # Use the first matching row
-                    idx = matches.index[0]
+                
+                # Process each row individually
+                for idx, row in filtered_df.iterrows():
+                    value = str(row[column]).strip()
                     has_hyperlink = self.excel_manager.has_hyperlink(idx)
                     formatted_value = self._format_filter2_value(value, idx, has_hyperlink)
                     formatted_values.append(formatted_value)
                 
+                # Sort the formatted values for better user experience
+                formatted_values.sort()
                 values = formatted_values
+            else:
+                # For other filters, keep using unique values
+                values = sorted(filtered_df[column].astype(str).unique().tolist())
             
             # Update the fuzzy search values
             values = [str(x).strip() for x in values]
