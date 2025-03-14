@@ -48,10 +48,15 @@ class TemplateManager:
             
         def get_first_word(s: str) -> str:
             """Get the first word from a string."""
+            # First remove any Excel Row information
+            s = re.sub(r'\s*⟨Excel Row[:-]\s*\d+⟩', '', s)
             return s.split()[0] if s else ''
             
         def split_by_no_get_last(s: str) -> str:
             """Split string by N° and get the last element, preserving the N° prefix."""
+            # First, remove any Excel Row information
+            s = re.sub(r'\s*⟨Excel Row[:-]\s*\d+⟩', '', s)
+            
             if 'N°' in s:
                 parts = s.split('N°')
                 return f"N°{parts[-1].strip()}"

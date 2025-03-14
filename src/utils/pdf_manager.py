@@ -277,6 +277,13 @@ class PDFManager(QObject):
             # Create a copy of the data to avoid modifying the original
             template_data = data.copy()
             
+            # Clean Excel Row information from all string values
+            for key in list(template_data.keys()):
+                if isinstance(template_data[key], str):
+                    # Remove Excel Row information from the value
+                    import re
+                    template_data[key] = re.sub(r'\s*⟨Excel Row[:-]\s*\d+⟩', '', template_data[key])
+            
             # Handle NaT values and convert dates
             for key in list(template_data.keys()):
                 # Check for NaT values from pandas

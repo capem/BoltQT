@@ -473,13 +473,13 @@ class ProcessingThread(QThread):
         return str(value).strip()
     
     def _create_template_data(self, row_data, filter_columns, filter_values, row_idx=None):
-        """Create template data dict from row data efficiently.
+        """Create template data dictionary from row data and filter values.
         
         Args:
-            row_data: Excel row data
-            filter_columns: List of column names for filters
+            row_data: DataFrame row
+            filter_columns: List of filter column names
             filter_values: List of filter values
-            row_idx: Optional row index (0-based)
+            row_idx: Excel row index
             
         Returns:
             Dict with template data
@@ -489,13 +489,19 @@ class ProcessingThread(QThread):
         
         # Add filter values to template data
         for i, (column, value) in enumerate(zip(filter_columns, filter_values), 1):
-            # For filter2, include Excel row in the value
+            # For filter2, include Excel row in the value only if it's not already there
             if i == 2 and row_idx is not None:
                 parent = self.parent()
                 if parent and hasattr(parent, '_format_filter2_value'):
-                    excel_row = row_idx + 2  # Convert to Excel row (1-based + header)
-                    formatted_value = value + f" ⟨Excel Row: {excel_row}⟩"
-                    template_data[f"filter{i}"] = formatted_value
+                    # Check if value already contains Excel Row information
+                    import re
+                    if not re.search(r'⟨Excel Row[:-]\s*\d+⟩', value):
+                        excel_row = row_idx + 2  # Convert to Excel row (1-based + header)
+                        formatted_value = value + f" ⟨Excel Row: {excel_row}⟩"
+                        template_data[f"filter{i}"] = formatted_value
+                    else:
+                        # Use value as is if it already has Excel Row info
+                        template_data[f"filter{i}"] = value
                 else:
                     template_data[f"filter{i}"] = value
             else:
@@ -823,6 +829,14 @@ class ProcessingTab(QWidget):
         Returns:
             Formatted string with checkmark (if applicable) and row information
         """
+        import re
+        # Check if value already contains Excel Row information
+        if re.search(r'⟨Excel Row[:-]\s*\d+⟩', value):
+            # Already has Excel Row info, just add checkmark if needed
+            if has_hyperlink and not value.startswith("✓ "):
+                return "✓ " + value
+            return value
+            
         prefix = "✓ " if has_hyperlink else ""
         # +2 because Excel is 1-based and has header
         return f"{prefix}{value} ⟨Excel Row: {row_idx + 2}⟩"
