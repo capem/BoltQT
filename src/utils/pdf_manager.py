@@ -231,17 +231,37 @@ class PDFManager(QObject):
             self.close_current_pdf()
             return False
 
-    def close_current_pdf(self) -> None:
-        """Close the currently open PDF document."""
+    def close_current_pdf(self, max_attempts: int = 3) -> None:
+        """Close the currently open PDF document with retry logic.
+        
+        Args:
+            max_attempts: Maximum number of attempts to close the document
+        """
         if self._current_doc:
-            try:
-                self._current_doc.close()
-            except Exception as e:
-                print(f"[DEBUG] Error closing PDF: {str(e)}")
-            finally:
-                self._current_doc = None
-                self._current_path = None
-                self._rotation = 0
+            last_error = None
+            for attempt in range(max_attempts):
+                try:
+                    # Close the document
+                    self._current_doc.close()
+                    print("[DEBUG] Successfully closed PDF document")
+                    break
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_attempts - 1:
+                        print(f"[DEBUG] Retry {attempt + 1}: Error closing PDF: {str(e)}")
+                        import time
+                        time.sleep(0.5)  # Short delay between retries
+                    else:
+                        print(f"[DEBUG] All attempts to close PDF failed: {str(e)}")
+            
+            # Always clean up references even if close failed
+            self._current_doc = None
+            self._current_path = None
+            self._rotation = 0
+            
+            # If all attempts failed, log it but continue
+            if last_error:
+                print("[DEBUG] Cleaned up PDF references despite close errors")
 
     def get_current_page(self) -> Optional[fitz.Page]:
         """Get the current page of the open PDF."""
@@ -599,20 +619,44 @@ class PDFManager(QObject):
             print(f"[DEBUG] Error reverting PDF: {str(e)}")
             return False
 
-    def _ensure_file_released(self, file_path: str) -> None:
-        """Ensure any resources for the file are released.
+    def _ensure_file_released(self, file_path: str, max_attempts: int = 3) -> None:
+        """Ensure any resources for the file are released with retry logic.
 
         Args:
-            file_path: Path to the file
+            file_path: Path to the file to release
+            max_attempts: Maximum number of attempts to release the file
         """
-        # If this is the current open document, close it
-        if self._current_path == file_path and self._current_doc is not None:
-            self.close_current_pdf()
+        # Use normalized paths for comparison
+        normalized_path = self._normalize_path(file_path)
+        current_normalized = self._normalize_path(self._current_path) if self._current_path else None
 
-        # Force garbage collection to release any potential lingering handles
-        import gc
+        # If this is the current open document, close it with retries
+        if normalized_path == current_normalized and self._current_doc is not None:
+            self.close_current_pdf(max_attempts=max_attempts)
 
-        gc.collect()
+        # Try to verify file is released by attempting to open it
+        for attempt in range(max_attempts):
+            try:
+                with open(file_path, "rb") as test_file:
+                    # Just testing if we can open it
+                    pass
+                print(f"[DEBUG] Verified file is released: {file_path}")
+                return
+            except PermissionError:
+                if attempt < max_attempts - 1:
+                    print(f"[DEBUG] Retry {attempt + 1}: File still locked: {file_path}")
+                    import time
+                    time.sleep(0.5)  # Short delay between retries
+                    continue
+                else:
+                    print(f"[DEBUG] Warning: Could not verify file release after {max_attempts} attempts: {file_path}")
+            except FileNotFoundError:
+                # File doesn't exist, so no lock to worry about
+                print(f"[DEBUG] File does not exist, no lock to release: {file_path}")
+                return
+            except Exception as e:
+                print(f"[DEBUG] Unexpected error checking file lock: {str(e)}")
+                return
 
     def cleanup_processed_files(self, folder: str) -> None:
         """Clean up files that were marked as processed but not deleted.

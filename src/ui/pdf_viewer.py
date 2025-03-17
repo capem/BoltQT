@@ -110,69 +110,96 @@ class PDFViewer(QWidget):
     def clear_pdf(self) -> None:
         """Explicitly close and clear the current PDF document.
 
-        This method should be called before attempting to remove the PDF file.
+        This method properly releases all resources and file handles before clearing the PDF.
+        It should be called before attempting to remove or modify the PDF file.
         """
-        # Close the PDF in the manager first
-        if self.current_pdf:
-            self.pdf_manager.close_current_pdf()
+        try:
+            # Clear the view's document reference first
+            self.pdf_view.setDocument(None)
+            
+            # Close the PDF in the manager first to release its handles
+            if self.current_pdf:
+                self.pdf_manager.close_current_pdf()
 
-        # Close the document in the viewer
-        self.pdf_document.close()
-        self.current_pdf = None
+            # Close and reset the document object
+            if self.pdf_document:
+                self.pdf_document.close()
+                self.pdf_document.deleteLater()  # Schedule object for deletion
+                
+                # Create a new document instance
+                self.pdf_document = QPdfDocument(self)
+                self.pdf_view.setDocument(self.pdf_document)
+                self.page_selector.setDocument(self.pdf_document)
 
-        # Force garbage collection to release file handles
-        import gc
+            self.current_pdf = None
 
-        gc.collect()
+        except Exception as e:
+            print(f"[DEBUG] Error during PDF cleanup: {str(e)}")
+            # Continue with cleanup even if there's an error
 
     def display_pdf(
         self,
         pdf_path: Optional[str],
         zoom: Optional[float] = None,
         show_loading: bool = True,
+        retry_count: int = 3,
     ) -> None:
-        """Display a PDF file.
+        """Display a PDF file with proper error handling and retries.
 
         Args:
             pdf_path: Path to the PDF file.
             zoom: Zoom level (1.0 = 100%).
             show_loading: Whether to show the loading label.
+            retry_count: Number of times to retry loading if file is locked.
         """
+        if show_loading:
+            self.loading_label.show()
+            self.loading_label.raise_()
+
         try:
-            # Clear current display
+            # Clear current display and ensure proper cleanup
             self.clear_pdf()
 
             if not pdf_path:
                 return
-
-            # Show loading label if requested
-            if show_loading:
-                self.loading_label.show()
-                self.loading_label.raise_()
 
             # Update zoom level if provided
             if zoom is not None:
                 self.zoom_level = zoom
                 self.pdf_view.setZoomFactor(self.zoom_level)
 
-            # Open the PDF using PDF manager to track it
-            if not self.pdf_manager.open_pdf(pdf_path):
-                raise RuntimeError("Failed to open PDF")
+            # Try opening the PDF with retries
+            for attempt in range(retry_count):
+                try:
+                    # Open the PDF using PDF manager to track it
+                    if not self.pdf_manager.open_pdf(pdf_path):
+                        raise RuntimeError("Failed to open PDF")
 
-            # Load the document in QPdfView
-            self.pdf_document.load(pdf_path)
-
-            # Update current PDF path
-            self.current_pdf = pdf_path
+                    # Load the document in QPdfView
+                    self.pdf_document.load(pdf_path)
+                    
+                    # Update current PDF path only after successful load
+                    self.current_pdf = pdf_path
+                    break
+                    
+                except Exception as e:
+                    if attempt < retry_count - 1:
+                        print(f"[DEBUG] Retry {attempt + 1}: Error loading PDF: {str(e)}")
+                        import time
+                        time.sleep(0.5)  # Short delay between retries
+                        continue
+                    raise  # Re-raise the last exception if all retries failed
 
         except Exception as e:
-            print(f"[DEBUG] Error displaying PDF: {str(e)}")
-            self.loading_label.setText(f"Error displaying PDF:\n{str(e)}")
+            error_msg = f"Error displaying PDF: {str(e)}"
+            print(f"[DEBUG] {error_msg}")
+            self.loading_label.setText(f"{error_msg}\n\nPlease try again.")
             self.loading_label.show()
+            self.current_pdf = None  # Ensure we don't keep reference to failed load
 
         finally:
-            # Hide loading label if it was shown
-            if show_loading:
+            # Hide loading label if successful
+            if show_loading and self.current_pdf:
                 self.loading_label.hide()
 
     def zoom_in(self) -> None:

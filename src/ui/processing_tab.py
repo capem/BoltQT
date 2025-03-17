@@ -927,12 +927,13 @@ class ProcessingTab(QWidget):
         self._load_next_pdf()
 
     def _load_next_pdf(self, skip: bool = False) -> None:
-        """Load the next PDF file."""
+        """Load the next PDF file with improved file handle management."""
         try:
             print(
                 f"[DEBUG] _load_next_pdf called with skip={skip}, current_pdf={self.current_pdf}"
             )
 
+            # Handle skipped files first
             if skip and self.current_pdf:
                 # Create skipped task
                 task = PDFTask(
@@ -942,62 +943,78 @@ class ProcessingTab(QWidget):
                     end_time=datetime.now(),
                 )
                 self.processing_thread.tasks[task.task_id] = task
-
-                # Mark the file as processed in our tracking
                 self.pdf_manager.mark_file_processed(self.current_pdf)
 
-            # If we have a current PDF, make sure to release it completely
+            # Ensure proper cleanup of current PDF
             if self.current_pdf:
-                # Clear the PDF from the viewer
-                self.pdf_viewer.clear_pdf()
+                try:
+                    # Clear the PDF from the viewer with retries
+                    retry_count = 3
+                    for attempt in range(retry_count):
+                        try:
+                            self.pdf_viewer.clear_pdf()
+                            break
+                        except Exception as e:
+                            if attempt < retry_count - 1:
+                                print(f"[DEBUG] Retry {attempt + 1}: Error clearing PDF: {str(e)}")
+                                time.sleep(0.5)  # Short delay between retries
+                                continue
+                            raise
 
-                # Reset our state variables
-                self.current_pdf = None
-                self.current_pdf_start_time = None
+                    # Reset state variables
+                    self.current_pdf = None
+                    self.current_pdf_start_time = None
 
-                # Force garbage collection
-                gc.collect()
+                except Exception as cleanup_error:
+                    print(f"[DEBUG] Warning: Error during PDF cleanup: {str(cleanup_error)}")
+                    # Continue even if cleanup fails
 
-            # Get next file
+            # Get config and validate
             config = self.config_manager.get_config()
             if not config["source_folder"]:
                 self._update_status("Source folder not configured")
                 return
 
+            # Get active tasks
             active_tasks = {
                 k: v
                 for k, v in self.processing_thread.tasks.items()
                 if v.status in ["pending", "processing"]
             }
 
-            # Temporary yield to let other operations complete
+            # Allow events to process before loading next PDF
             QApplication.processEvents()
 
-            # Now get the next PDF
-            next_pdf = self.pdf_manager.get_next_pdf(
-                config["source_folder"], active_tasks
-            )
-
-            # We don't need to check if we're reloading the same file here anymore,
-            # because the get_next_pdf method already checks against processed files.
-            # The warning was occurring because we were comparing the newly selected file
-            # with the current file that was preloaded in the UI, not the one that was
-            # actually just processed.
+            # Try to get next PDF with retries
+            next_pdf = None
+            retry_count = 3
+            for attempt in range(retry_count):
+                try:
+                    next_pdf = self.pdf_manager.get_next_pdf(
+                        config["source_folder"], active_tasks
+                    )
+                    break
+                except Exception as e:
+                    if attempt < retry_count - 1:
+                        print(f"[DEBUG] Retry {attempt + 1}: Error getting next PDF: {str(e)}")
+                        time.sleep(0.5)
+                        continue
+                    raise
 
             if next_pdf:
                 print(f"[DEBUG] Loading next PDF: {next_pdf}")
                 self.current_pdf = next_pdf
                 self.current_pdf_start_time = datetime.now()
-                self.pdf_viewer.display_pdf(next_pdf)
 
-                # Clear filters
+                # Display PDF with retries built into the display_pdf method
+                self.pdf_viewer.display_pdf(next_pdf, retry_count=3)
+
+                # Clear and update filters
                 for frame in self.filter_frames:
                     frame["fuzzy"].clear()
-
-                # Load first filter values
                 self._load_filter_values()
 
-                # Focus the first filter's search input
+                # Focus first filter
                 if self.filter_frames:
                     self.filter_frames[0]["fuzzy"].entry.setFocus()
 
@@ -1008,15 +1025,18 @@ class ProcessingTab(QWidget):
                 self.pdf_viewer.display_pdf(None)
                 self._update_status("No files to process")
 
-                # Focus the first filter's search input even if no new PDF to load
                 if self.filter_frames:
                     self.filter_frames[0]["fuzzy"].entry.setFocus()
 
-            # Update process button state
+            # Update UI state
             self._update_process_button()
 
         except Exception as e:
             self._handle_error(e, "loading next PDF")
+            # Try to recover by clearing the current PDF
+            self.current_pdf = None
+            self.current_pdf_start_time = None
+            self.pdf_viewer.display_pdf(None)
 
     def _update_process_button(self) -> None:
         """Update the state of the process button."""
