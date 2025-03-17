@@ -642,27 +642,3 @@ class PDFManager(QObject):
             except Exception as e:
                 print(f"[DEBUG] Unexpected error checking file lock: {str(e)}")
                 return
-
-    def cleanup_processed_files(self, folder: str) -> None:
-        """Clean up files that were marked as processed but not deleted.
-
-        Args:
-            folder: Folder to check for processed files
-        """
-        if not os.path.exists(folder):
-            return
-
-        try:
-            for file in os.listdir(folder):
-                if file.lower().endswith(".processed.pdf"):
-                    file_path = os.path.join(folder, file)
-                    try:
-                        # Try to delete the processed file
-                        os.remove(file_path)
-                        print(f"[DEBUG] Cleaned up processed file: {file_path}")
-                    except Exception as e:
-                        print(
-                            f"[DEBUG] Could not clean up processed file: {file_path}, error: {str(e)}"
-                        )
-        except Exception as e:
-            print(f"[DEBUG] Error cleaning up processed files: {str(e)}")

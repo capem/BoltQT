@@ -4,7 +4,6 @@ from datetime import datetime
 import time
 import pandas as pd
 import os
-import gc
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -241,7 +240,7 @@ class ProcessingThread(QThread):
 
     def _create_new_row(self, filter_columns, filter_values):
         """Create a new Excel row with the given filter values.
-        
+
         Args:
             filter_columns: List of column names
             filter_values: List of filter values
@@ -251,7 +250,7 @@ class ProcessingThread(QThread):
             int: Index of the newly created row
         """
         parent = self.parent()
-        
+
         # Get configuration
         config = {}
         if parent and hasattr(parent, "config_manager"):
@@ -278,7 +277,9 @@ class ProcessingThread(QThread):
         # Update the cached DataFrame to include the new row
         self._excel_data_cache["data"] = excel_manager.excel_data
 
-        print(f"[DEBUG] Added new row {new_row_idx} for filter2 value '{filter_values[1]}'")
+        print(
+            f"[DEBUG] Added new row {new_row_idx} for filter2 value '{filter_values[1]}'"
+        )
         return new_row_idx
 
     def _find_matching_row(self, df, filter_columns, filter_values, task=None):
@@ -295,7 +296,9 @@ class ProcessingThread(QThread):
         """
         # Trust task.row_idx if valid bounds
         if task and task.row_idx >= 0 and task.row_idx < len(df):
-            print(f"[DEBUG] Using task row_idx {task.row_idx} (Excel row {task.row_idx + 2})")
+            print(
+                f"[DEBUG] Using task row_idx {task.row_idx} (Excel row {task.row_idx + 2})"
+            )
             return task.row_idx
         else:
             # Create new row with clean filter2 value
@@ -499,25 +502,11 @@ class ProcessingTab(QWidget):
         self.processing_thread.task_failed.connect(self._on_task_failed)
         self.processing_thread.start()
 
-        # Clean up any processed files from previous runs
-        self._cleanup_processed_files()
-
         # Create UI
         self._setup_ui()
 
         # Register for config changes
         self.config_manager.config_changed.connect(self._on_config_change)
-
-    def _cleanup_processed_files(self) -> None:
-        """Clean up any processed files from previous runs."""
-        config = self.config_manager.get_config()
-        source_folder = config.get("source_folder")
-        if source_folder:
-            try:
-                self.pdf_manager.cleanup_processed_files(source_folder)
-            except Exception as e:
-                print(f"[DEBUG] Error during cleanup of processed files: {str(e)}")
-                # Continue even if cleanup fails
 
     def _create_section_frame(self, title: str) -> tuple[QFrame, QVBoxLayout]:
         """Create a styled frame for a section."""
@@ -956,7 +945,9 @@ class ProcessingTab(QWidget):
                             break
                         except Exception as e:
                             if attempt < retry_count - 1:
-                                print(f"[DEBUG] Retry {attempt + 1}: Error clearing PDF: {str(e)}")
+                                print(
+                                    f"[DEBUG] Retry {attempt + 1}: Error clearing PDF: {str(e)}"
+                                )
                                 time.sleep(0.5)  # Short delay between retries
                                 continue
                             raise
@@ -966,7 +957,9 @@ class ProcessingTab(QWidget):
                     self.current_pdf_start_time = None
 
                 except Exception as cleanup_error:
-                    print(f"[DEBUG] Warning: Error during PDF cleanup: {str(cleanup_error)}")
+                    print(
+                        f"[DEBUG] Warning: Error during PDF cleanup: {str(cleanup_error)}"
+                    )
                     # Continue even if cleanup fails
 
             # Get config and validate
@@ -996,7 +989,9 @@ class ProcessingTab(QWidget):
                     break
                 except Exception as e:
                     if attempt < retry_count - 1:
-                        print(f"[DEBUG] Retry {attempt + 1}: Error getting next PDF: {str(e)}")
+                        print(
+                            f"[DEBUG] Retry {attempt + 1}: Error getting next PDF: {str(e)}"
+                        )
                         time.sleep(0.5)
                         continue
                     raise
