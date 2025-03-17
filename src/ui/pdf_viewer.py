@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 from PyQt6.QtPdf import QPdfDocument
-from PyQt6.QtPdfWidgets import QPdfPageSelector, QPdfView
+from PyQt6.QtPdfWidgets import QPdfView
 from PyQt6.QtCore import Qt, QEvent
 from ..utils.pdf_manager import PDFManager
 
@@ -33,7 +33,7 @@ class PDFViewer(QWidget):
 
         # Initialize PDF components
         self.pdf_document = QPdfDocument(self)
-        
+
         # Create and configure PDF viewer widget
         self.pdf_view = QPdfView(self)
         self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
@@ -42,22 +42,17 @@ class PDFViewer(QWidget):
 
         # Set up document connections
         self.pdf_view.setDocument(self.pdf_document)
-        
+
         # Enable touch and wheel events
         viewport = self.pdf_view.viewport()
         if viewport:
             viewport.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
             viewport.installEventFilter(self)
 
-        # Create and configure page selector
-        self.page_selector = QPdfPageSelector(self)
-        self.page_selector.setDocument(self.pdf_document)
-
         # Create layout
         layout = QVBoxLayout(self)
         layout.addWidget(self.pdf_view)
         layout.addWidget(self.loading_label)
-        layout.addWidget(self.page_selector)
 
         # Set stylesheet
         self.setStyleSheet("""
@@ -116,8 +111,7 @@ class PDFViewer(QWidget):
         try:
             # Clear view's document reference first
             self.pdf_view.setDocument(None)
-            self.page_selector.setDocument(None)
-            
+
             # Close and cleanup document
             if self.pdf_document:
                 self.pdf_document.close()
@@ -167,22 +161,24 @@ class PDFViewer(QWidget):
                 self.pdf_document.deleteLater()
             self.pdf_document = QPdfDocument(self)
             self.pdf_view.setDocument(self.pdf_document)
-            self.page_selector.setDocument(self.pdf_document)
 
             # Try opening the PDF with retries
             for attempt in range(retry_count):
                 try:
                     # Load the document directly with Qt
                     self.pdf_document.load(pdf_path)
-                    
+
                     # Update current PDF path only after successful load
                     self.current_pdf = pdf_path
                     break
-                    
+
                 except Exception as e:
                     if attempt < retry_count - 1:
-                        print(f"[DEBUG] Retry {attempt + 1}: Error loading PDF: {str(e)}")
+                        print(
+                            f"[DEBUG] Retry {attempt + 1}: Error loading PDF: {str(e)}"
+                        )
                         import time
+
                         time.sleep(0.5)  # Short delay between retries
                         continue
                     raise  # Re-raise the last exception if all retries failed
