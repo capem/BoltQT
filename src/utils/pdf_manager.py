@@ -2,9 +2,9 @@ from __future__ import annotations
 from typing import Dict, Any, Optional
 import os
 from tempfile import TemporaryDirectory
-import fitz  # PyMuPDF
 import shutil
 from PyQt6.QtCore import QObject
+from PyQt6.QtPdf import QPdfDocument
 from .models import PDFTask
 from .template_manager import TemplateManager
 from datetime import datetime
@@ -16,7 +16,7 @@ class PDFManager(QObject):
     def __init__(self) -> None:
         """Initialize PDFManager."""
         super().__init__()
-        self._current_doc: Optional[fitz.Document] = None
+        self._current_doc: Optional[QPdfDocument] = None
         self._current_path: Optional[str] = None
         self._rotation: int = 0
         self.template_manager = TemplateManager()
@@ -219,8 +219,9 @@ class PDFManager(QObject):
             # Close any open document
             self.close_current_pdf()
 
-            # Open new document
-            self._current_doc = fitz.open(pdf_path)
+            # Create new document
+            self._current_doc = QPdfDocument(self)
+            self._current_doc.load(pdf_path)
             self._current_path = pdf_path
             self._rotation = 0
 
@@ -233,7 +234,7 @@ class PDFManager(QObject):
 
     def close_current_pdf(self, max_attempts: int = 3) -> None:
         """Close the currently open PDF document with retry logic.
-        
+
         Args:
             max_attempts: Maximum number of attempts to close the document
         """
@@ -241,51 +242,31 @@ class PDFManager(QObject):
             last_error = None
             for attempt in range(max_attempts):
                 try:
-                    # Close the document
+                    # Close and cleanup document
                     self._current_doc.close()
+                    self._current_doc.deleteLater()
                     print("[DEBUG] Successfully closed PDF document")
                     break
                 except Exception as e:
                     last_error = e
                     if attempt < max_attempts - 1:
-                        print(f"[DEBUG] Retry {attempt + 1}: Error closing PDF: {str(e)}")
+                        print(
+                            f"[DEBUG] Retry {attempt + 1}: Error closing PDF: {str(e)}"
+                        )
                         import time
+
                         time.sleep(0.5)  # Short delay between retries
                     else:
                         print(f"[DEBUG] All attempts to close PDF failed: {str(e)}")
-            
-            # Always clean up references even if close failed
+
+            # Always clean up references
             self._current_doc = None
             self._current_path = None
             self._rotation = 0
-            
+
             # If all attempts failed, log it but continue
             if last_error:
                 print("[DEBUG] Cleaned up PDF references despite close errors")
-
-    def get_current_page(self) -> Optional[fitz.Page]:
-        """Get the current page of the open PDF."""
-        if not self._current_doc:
-            return None
-
-        try:
-            return self._current_doc[0]  # Always return first page
-        except Exception as e:
-            print(f"[DEBUG] Error getting PDF page: {str(e)}")
-            return None
-
-    def rotate_page(self, clockwise: bool = True) -> None:
-        """Rotate the current page.
-
-        Args:
-            clockwise: True for clockwise rotation, False for counter-clockwise.
-        """
-        rotation = 90 if clockwise else -90
-        self._rotation = (self._rotation + rotation) % 360
-
-    def get_rotation(self) -> int:
-        """Get the current rotation angle."""
-        return self._rotation
 
     def clear_cache(self) -> None:
         """Clear any cached data."""
@@ -478,25 +459,22 @@ class PDFManager(QObject):
                         f"Could not copy PDF to temporary location: {str(e)}"
                     )
 
-                # Apply rotation if needed
+                # Create a new document for rotation if needed
                 if task.rotation_angle != 0:
                     try:
-                        doc = fitz.open(temp_pdf)
-                        page = doc[0]
-                        page.set_rotation(task.rotation_angle)
-                        doc.save(temp_pdf)
-                        doc.close()
+                        # Store rotation in task metadata for viewer
+                        task.metadata = {"rotation": task.rotation_angle}
                         print(
-                            f"[DEBUG] Applied rotation of {task.rotation_angle} degrees"
+                            f"[DEBUG] Stored rotation of {task.rotation_angle} degrees in metadata"
                         )
                     except Exception as e:
-                        print(f"[DEBUG] Error applying rotation: {str(e)}")
-                        # Continue even if rotation fails
+                        print(f"[DEBUG] Error storing rotation metadata: {str(e)}")
+                        # Continue even if metadata storage fails
 
                 # Move to final location
                 try:
-                    # Make a regular copy first to handle cross-device links
-                    shutil.copy2(temp_pdf, output_path)
+                    # Make a regular copy to handle cross-device links
+                    shutil.copy2(source_path, output_path)
                     print(
                         f"[DEBUG] Successfully copied PDF to final location: {output_path}"
                     )
@@ -628,7 +606,9 @@ class PDFManager(QObject):
         """
         # Use normalized paths for comparison
         normalized_path = self._normalize_path(file_path)
-        current_normalized = self._normalize_path(self._current_path) if self._current_path else None
+        current_normalized = (
+            self._normalize_path(self._current_path) if self._current_path else None
+        )
 
         # If this is the current open document, close it with retries
         if normalized_path == current_normalized and self._current_doc is not None:
@@ -644,12 +624,17 @@ class PDFManager(QObject):
                 return
             except PermissionError:
                 if attempt < max_attempts - 1:
-                    print(f"[DEBUG] Retry {attempt + 1}: File still locked: {file_path}")
+                    print(
+                        f"[DEBUG] Retry {attempt + 1}: File still locked: {file_path}"
+                    )
                     import time
+
                     time.sleep(0.5)  # Short delay between retries
                     continue
                 else:
-                    print(f"[DEBUG] Warning: Could not verify file release after {max_attempts} attempts: {file_path}")
+                    print(
+                        f"[DEBUG] Warning: Could not verify file release after {max_attempts} attempts: {file_path}"
+                    )
             except FileNotFoundError:
                 # File doesn't exist, so no lock to worry about
                 print(f"[DEBUG] File does not exist, no lock to release: {file_path}")
