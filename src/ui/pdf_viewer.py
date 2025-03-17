@@ -26,30 +26,30 @@ class PDFViewer(QWidget):
         self.current_pdf: Optional[str] = None
         self.zoom_level: float = 1.0
 
-        # Create PDF document object
-        self.pdf_document = QPdfDocument(self)
+        # Create loading label first
+        self.loading_label = QLabel("No PDF loaded", self)
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_label.setStyleSheet("background: none; border: none;")
 
-        # Create PDF viewer widget
+        # Initialize PDF components
+        self.pdf_document = QPdfDocument(self)
+        
+        # Create and configure PDF viewer widget
         self.pdf_view = QPdfView(self)
-        self.pdf_view.setDocument(self.pdf_document)
         self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
         self.pdf_view.setZoomFactor(self.zoom_level)
-
-        # Set the document view mode to display all pages vertically with scroll bar
         self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
 
-        # Enable viewport events for the PDF view to allow wheel events
-        self.pdf_view.viewport().setAttribute(
-            Qt.WidgetAttribute.WA_AcceptTouchEvents, True
-        )
-        self.pdf_view.viewport().installEventFilter(self)
+        # Set up document connections
+        self.pdf_view.setDocument(self.pdf_document)
+        
+        # Enable touch and wheel events
+        viewport = self.pdf_view.viewport()
+        if viewport:
+            viewport.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+            viewport.installEventFilter(self)
 
-        # Create loading label
-        self.loading_label = QLabel("Loading...")
-        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.loading_label.hide()
-
-        # Create page selector
+        # Create and configure page selector
         self.page_selector = QPdfPageSelector(self)
         self.page_selector.setDocument(self.pdf_document)
 
@@ -114,23 +114,17 @@ class PDFViewer(QWidget):
         It should be called before attempting to remove or modify the PDF file.
         """
         try:
-            # Clear the view's document reference first
+            # Clear view's document reference first
             self.pdf_view.setDocument(None)
+            self.page_selector.setDocument(None)
             
-            # Close the PDF in the manager first to release its handles
-            if self.current_pdf:
-                self.pdf_manager.close_current_pdf()
-
-            # Close and reset the document object
+            # Close and cleanup document
             if self.pdf_document:
                 self.pdf_document.close()
-                self.pdf_document.deleteLater()  # Schedule object for deletion
-                
-                # Create a new document instance
-                self.pdf_document = QPdfDocument(self)
-                self.pdf_view.setDocument(self.pdf_document)
-                self.page_selector.setDocument(self.pdf_document)
+                self.pdf_document.deleteLater()
+                self.pdf_document = None
 
+            # Reset state
             self.current_pdf = None
 
         except Exception as e:
@@ -168,14 +162,17 @@ class PDFViewer(QWidget):
                 self.zoom_level = zoom
                 self.pdf_view.setZoomFactor(self.zoom_level)
 
+            # Create new document instance to ensure clean state
+            if self.pdf_document:
+                self.pdf_document.deleteLater()
+            self.pdf_document = QPdfDocument(self)
+            self.pdf_view.setDocument(self.pdf_document)
+            self.page_selector.setDocument(self.pdf_document)
+
             # Try opening the PDF with retries
             for attempt in range(retry_count):
                 try:
-                    # Open the PDF using PDF manager to track it
-                    if not self.pdf_manager.open_pdf(pdf_path):
-                        raise RuntimeError("Failed to open PDF")
-
-                    # Load the document in QPdfView
+                    # Load the document directly with Qt
                     self.pdf_document.load(pdf_path)
                     
                     # Update current PDF path only after successful load
