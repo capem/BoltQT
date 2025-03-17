@@ -80,8 +80,7 @@ class ProcessingThread(QThread):
                         )
                 
                 row_data = df.iloc[row_idx]
-                self._validate_row_data(row_data, filter_columns, filter_values)
-                
+
                 # Phase 4: Create template data
                 template_data = self._create_template_data(
                     row_data, filter_columns, filter_values, row_idx
@@ -414,102 +413,6 @@ class ProcessingThread(QThread):
                 raise Exception(
                     f"Failed to automatically add new row for filter value: {filter2_value}. Error: {str(e)}"
                 )
-
-    def _validate_row_data(self, row_data, filter_columns, filter_values):
-        """Validate that row data matches filter values."""
-        # Skip validation if task's row_idx was directly obtained from filter2 row info
-        parent = self.parent()
-        if (
-            parent
-            and hasattr(parent, "_parse_filter2_value")
-            and len(filter_values) > 1
-        ):
-            # Check if we originally had a row number in filter2
-            formatted_filter2 = (
-                self.parent().filter_frames[1]["fuzzy"].get()
-                if hasattr(self.parent(), "filter_frames")
-                else None
-            )
-            if formatted_filter2 and "⟨Excel Row:" in formatted_filter2:
-                # We have a direct row reference, skip strict validation
-                print(
-                    "[DEBUG] Using row directly from filter2 row info, skipping strict validation"
-                )
-                return True
-
-        if len(filter_columns) < 2:
-            return  # Not enough filters to validate
-
-        mismatched_filters = []
-        date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d"]
-
-        print("[DEBUG] Validating row data against filter values")
-        for i, (col, val) in enumerate(zip(filter_columns, filter_values)):
-            if i != 1:  # Skip filter2 which we already used for finding the row
-                row_value = row_data[col]
-
-                # Handle date values more intelligently
-                if "DATE" in col.upper() and pd.notna(row_value):
-                    # Try to normalize both values to a common date format for comparison
-                    row_date = self._normalize_date(row_value, date_formats)
-                    filter_date = self._normalize_date(val, date_formats)
-
-                    if row_date and filter_date and row_date == filter_date:
-                        # Dates match when normalized
-                        print(
-                            f"[DEBUG] Date match in column {col} after normalization: '{val}' ≈ '{row_value}'"
-                        )
-                    elif filter_date is None:
-                        # Couldn't parse filter value as date, fall back to string comparison
-                        formatted_value = self._format_date_value(
-                            row_value, date_formats
-                        )
-                        if formatted_value != str(val).strip():
-                            print(
-                                f"[DEBUG] Date mismatch in column {col}: expected '{val}', got '{formatted_value}'"
-                            )
-                            mismatched_filters.append(
-                                f"{col}: expected '{val}', got '{formatted_value}'"
-                            )
-                        else:
-                            print(f"[DEBUG] Value match in column {col}: '{val}'")
-                    else:
-                        # Dates don't match even after normalization
-                        print(
-                            f"[DEBUG] Date mismatch in column {col}: expected '{val}' ({filter_date}), got '{row_value}' ({row_date})"
-                        )
-                        mismatched_filters.append(
-                            f"{col}: expected '{val}' ({filter_date}), got '{row_value}' ({row_date})"
-                        )
-                elif str(row_value).strip() != str(val).strip():
-                    print(
-                        f"[DEBUG] Value mismatch in column {col}: expected '{val}', got '{row_value}'"
-                    )
-                    mismatched_filters.append(
-                        f"{col}: expected '{val}', got '{row_value}'"
-                    )
-                else:
-                    print(f"[DEBUG] Value match in column {col}: '{val}'")
-
-        if mismatched_filters:
-            print(f"[DEBUG] Validation failed with mismatches: {mismatched_filters}")
-
-            # If date format issues are the only problems, warn but don't fail
-            only_date_issues = all(
-                "DATE" in mismatch.split(":")[0] for mismatch in mismatched_filters
-            )
-            if only_date_issues:
-                print(
-                    "[DEBUG] Only date format mismatches found, continuing with processing"
-                )
-                return True
-
-            raise Exception(
-                f"Selected row data doesn't match filter values: {', '.join(mismatched_filters)}"
-            )
-
-        print("[DEBUG] Row data validation successful")
-        return True
 
     def _normalize_date(self, value, date_formats):
         """Normalize a date value to ISO format (YYYY-MM-DD) for consistent comparison.
