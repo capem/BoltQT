@@ -239,182 +239,101 @@ class ProcessingThread(QThread):
             filter_columns.append(config[column_key])
         return filter_columns
 
+    def _create_new_row(self, filter_columns, filter_values, filter2_value):
+        """Create a new Excel row with the given filter values.
+        
+        Args:
+            filter_columns: List of column names
+            filter_values: List of filter values
+            filter2_value: Clean filter2 value without formatting
+
+        Returns:
+            int: Index of the newly created row
+        """
+        parent = self.parent()
+        
+        # Get configuration
+        config = {}
+        if parent and hasattr(parent, "config_manager"):
+            config = parent.config_manager.get_config()
+
+        # Create a new row with the filter values
+        filter_values_copy = filter_values.copy()
+        filter_values_copy[1] = filter2_value  # Use the raw value without formatting
+
+        # Use the excel manager to add the new row
+        excel_manager = None
+        if parent and hasattr(parent, "excel_manager"):
+            excel_manager = parent.excel_manager
+        elif hasattr(self, "excel_manager"):
+            excel_manager = self.excel_manager
+
+        if not excel_manager:
+            raise Exception("Excel manager not available")
+
+        new_row_data, new_row_idx = excel_manager.add_new_row(
+            config["excel_file"],
+            config["excel_sheet"],
+            filter_columns,
+            filter_values_copy,
+        )
+
+        # Update the cached DataFrame to include the new row
+        self._excel_data_cache["data"] = excel_manager.excel_data
+
+        # Update filter2 value with formatted value including row info
+        if parent and hasattr(parent, "_format_filter2_value"):
+            filter_values[1] = parent._format_filter2_value(
+                filter2_value, new_row_idx, False
+            )
+
+        print(f"[DEBUG] Added new row {new_row_idx} for filter2 value '{filter2_value}'")
+        return new_row_idx
+
     def _find_matching_row(self, df, filter_columns, filter_values, task=None):
-        """Find the matching row in Excel data based on filter values."""
+        """Find or create a matching row in Excel data based on filter values.
+
+        Args:
+            df: Pandas DataFrame containing Excel data
+            filter_columns: List of column names to filter on
+            filter_values: List of values to filter by
+            task: Optional PDFTask containing pre-set row information
+
+        Returns:
+            int: Index of the matching or newly created row
+        
+        Raises:
+            Exception: If required filters are missing or row creation fails
+        """
         if len(filter_values) < 2 or len(filter_columns) < 2:
             raise Exception("At least two filter values are required")
 
-        # Check if the task already has a valid row_idx set
+        # Check if task has a valid pre-set row_idx
         if task and task.row_idx >= 0 and task.row_idx < len(df):
-            # Verify that the row contains the expected filter2 value
+            # Verify the row contains the expected filter2 value
             filter2_column = filter_columns[1]
             filter2_value = filter_values[1]
             actual_value = str(df.iloc[task.row_idx][filter2_column])
 
             if actual_value == filter2_value:
-                print(
-                    f"[DEBUG] Using pre-set task row_idx {task.row_idx} (Excel row {task.row_idx + 2})"
-                )
+                print(f"[DEBUG] Using pre-set task row_idx {task.row_idx} (Excel row {task.row_idx + 2})")
                 return task.row_idx
             else:
-                print(
-                    f"[DEBUG] Pre-set row_idx {task.row_idx} does not match filter2 value. Expected: {filter2_value}, Got: {actual_value}"
-                )
-                # Continue with normal processing since the row doesn't match
+                print(f"[DEBUG] Pre-set row_idx {task.row_idx} invalid - creating new row")
+                # Create new row immediately since pre-set row was invalid
+                return self._create_new_row(filter_columns, filter_values, filter2_value)
 
-        # Get filter2 value - if it has Excel row info, extract it
+        # No pre-set row or invalid - create new row
         filter2_value = filter_values[1]
-        parent = self.parent()
-        row_idx = -1
-
-        # If filter2 value contains the Excel row marker, parse it
+        # If filter2 has Excel row info, clean it
         if isinstance(filter2_value, str) and "⟨Excel Row:" in filter2_value:
-            print(f"[DEBUG] Parsing filter2 value with row info: {filter2_value}")
-
-            # If parent exists and has the parse method, use it to extract row info
+            parent = self.parent()
             if parent and hasattr(parent, "_parse_filter2_value"):
-                # Parse filter2 value to extract clean value and row index
-                clean_value, extracted_row_idx = parent._parse_filter2_value(
-                    filter2_value
-                )
-                if extracted_row_idx >= 0:
-                    # Use the row index from the formatted value
-                    print(f"[DEBUG] Using extracted row index: {extracted_row_idx}")
-                    row_idx = extracted_row_idx
-                    filter2_value = clean_value
-                    filter_values[1] = (
-                        clean_value  # Replace with clean value for further processing
-                    )
+                clean_value, _ = parent._parse_filter2_value(filter2_value)
+                filter2_value = clean_value
 
-            # If we have a valid row index from the formatted value, verify it
-            if row_idx >= 0:
-                # Verify that the row contains the expected filter2 value
-                if row_idx < len(df):
-                    filter2_column = filter_columns[1]
-                    actual_value = str(df.iloc[row_idx][filter2_column])
-                    if actual_value == filter2_value:
-                        print(f"[DEBUG] Found matching row at index {row_idx}")
-                        return row_idx
-                    else:
-                        print(
-                            f"[DEBUG] Row index {row_idx} does not match filter2 value. Expected: {filter2_value}, Got: {actual_value}"
-                        )
-                else:
-                    print(
-                        f"[DEBUG] Row index {row_idx} is out of bounds (df length: {len(df)})"
-                    )
-
-            # If row index from formatted value doesn't work, fall back to search
-            filter2_column = filter_columns[1]
-            print(
-                f"[DEBUG] Searching for rows with filter2 value: '{filter2_value}' in column '{filter2_column}'"
-            )
-
-            # Use vectorized operations for better performance
-            matching_mask = df[filter2_column].astype(str) == filter2_value
-            matching_rows = df[matching_mask]
-
-            matching_count = len(matching_rows)
-            print(f"[DEBUG] Found {matching_count} matching rows for filter2 value")
-
-            if matching_count == 0:
-                raise Exception(
-                    f"Could not find Excel row matching filter value: {filter2_value}"
-                )
-
-            if matching_count == 1:
-                # Found exactly one match
-                row_idx = matching_rows.index[0]
-                print(f"[DEBUG] Found unique matching row at index {row_idx}")
-                return row_idx
-
-            # Multiple matches - try to narrow down using other filters
-            print("[DEBUG] Found multiple matches, narrowing down with other filters")
-            # Start with all matching rows from filter2
-            multi_filter_mask = matching_mask.copy()
-
-            # Apply additional filters
-            for i, (col, val) in enumerate(zip(filter_columns, filter_values)):
-                if i != 1:  # Skip filter2 which we already used
-                    print(f"[DEBUG] Applying additional filter: {col}={val}")
-                    multi_filter_mask &= df[col].astype(str) == str(val)
-                    narrowed_count = multi_filter_mask.sum()
-                    print(
-                        f"[DEBUG] After filter {i + 1}, {narrowed_count} matches remain"
-                    )
-                    # Check if we have a unique match after adding this filter
-                    if narrowed_count == 1:
-                        row_idx = df[multi_filter_mask].index[0]
-                        print(
-                            f"[DEBUG] Found unique matching row at index {row_idx} after applying all filters"
-                        )
-                        return row_idx
-
-            # If we still have multiple matches, use the first one
-            if multi_filter_mask.sum() > 0:
-                row_idx = df[multi_filter_mask].index[0]
-                print(f"[DEBUG] Using first of multiple matches at index {row_idx}")
-                return row_idx
-
-            # Fall back to the first match from filter2 if the combined filters yielded no results
-            row_idx = matching_rows.index[0]
-            print(f"[DEBUG] Falling back to first filter2 match at index {row_idx}")
-            return row_idx
-        else:
-            # No Excel row specified in the filter2 value, automatically add a new row
-            print(f"[DEBUG] Using direct filter2 value (no row info): {filter2_value}")
-            print("[DEBUG] No Excel row specified - automatically adding new row")
-            try:
-                # Get configuration
-                config = {}
-                if parent and hasattr(parent, "config_manager"):
-                    config = parent.config_manager.get_config()
-
-                # Create a new row with the filter values
-                filter_values_copy = filter_values.copy()
-                filter_values_copy[1] = (
-                    filter2_value  # Use the raw value without formatting
-                )
-
-                # Use the excel manager to add the new row
-                excel_manager = None
-                if parent and hasattr(parent, "excel_manager"):
-                    excel_manager = parent.excel_manager
-                elif hasattr(self, "excel_manager"):
-                    excel_manager = self.excel_manager
-
-                if not excel_manager:
-                    raise Exception("Excel manager not available")
-
-                new_row_data, new_row_idx = excel_manager.add_new_row(
-                    config["excel_file"],
-                    config["excel_sheet"],
-                    filter_columns,
-                    filter_values_copy,
-                )
-
-                # Update row_idx with the new row information
-                row_idx = new_row_idx
-
-                # Update the cached DataFrame to include the new row
-                # This ensures df.iloc[row_idx] will work after adding a new row
-                self._excel_data_cache["data"] = excel_manager.excel_data
-
-                # Update filter2 value with formatted value including row info
-                if parent and hasattr(parent, "_format_filter2_value"):
-                    filter_values[1] = parent._format_filter2_value(
-                        filter2_value, row_idx, False
-                    )
-
-                print(
-                    f"[DEBUG] Added new row {row_idx} for filter2 value '{filter2_value}'"
-                )
-                return row_idx
-            except Exception as e:
-                print(f"[DEBUG] Failed to automatically add new row: {str(e)}")
-                raise Exception(
-                    f"Failed to automatically add new row for filter value: {filter2_value}. Error: {str(e)}"
-                )
+        print(f"[DEBUG] Creating new row for filter2 value: {filter2_value}")
+        return self._create_new_row(filter_columns, filter_values, filter2_value)
 
     def _normalize_date(self, value, date_formats):
         """Normalize a date value to ISO format (YYYY-MM-DD) for consistent comparison.
