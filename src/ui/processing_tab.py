@@ -45,119 +45,53 @@ class ProcessingThread(QThread):
         """Process tasks in the queue."""
         while self.running:
             # Find next pending task
-            task_to_process = None
-            task_id = None
-
-            for id, task in self.tasks.items():
-                if task.status == "pending":
-                    task_to_process = task
-                    task_id = id
-                    task.status = "processing"
-                    break
-
+            task_to_process, task_id = self._get_next_pending_task()
+            
             if not task_to_process:
                 time.sleep(0.1)
                 continue
 
             try:
                 print(f"[DEBUG] Processing task {task_id}: {task_to_process.pdf_path}")
-
-                # Access the config manager and other required components
-                parent = self.parent()
-                if not parent or not hasattr(parent, "config_manager"):
-                    raise Exception("Could not access configuration")
-
-                config = parent.config_manager.get_config()
-                excel_manager = parent.excel_manager
-                pdf_manager = parent.pdf_manager
-
-                # Verify required configuration
-                required_configs = [
-                    "processed_folder",
-                    "output_template",
-                    "excel_file",
-                    "excel_sheet",
-                ]
-                missing_configs = [
-                    cfg for cfg in required_configs if not config.get(cfg)
-                ]
-                if missing_configs:
-                    raise Exception(
-                        f"Missing required configuration: {', '.join(missing_configs)}"
-                    )
-
-                # Load Excel data with caching for efficiency
+                
+                # Phase 1: Setup and validation
+                config, excel_manager, pdf_manager = self._get_required_components()
+                self._validate_config(config)
+                
+                # Phase 2: Load Excel data and find matching row
                 self._ensure_excel_data_loaded(excel_manager, config)
                 df = self._excel_data_cache["data"]
-
-                # Get filter columns based on number of filter values
-                filter_columns = self._get_filter_columns(
-                    config, task_to_process.filter_values
-                )
-
-                # Make a copy of filter values to avoid modifying the original
+                
+                filter_columns = self._get_filter_columns(config, task_to_process.filter_values)
                 filter_values = task_to_process.filter_values.copy()
-
-                # Find row index efficiently
-                try:
-                    row_idx = self._find_matching_row(
-                        df, filter_columns, filter_values, task_to_process
-                    )
-                except Exception as e:
-                    print(f"[DEBUG] Error finding matching row: {str(e)}")
-                    raise Exception(f"Could not find matching Excel row: {str(e)}")
-
-                # Update task with the row index
+                
+                row_idx = self._find_matching_row(df, filter_columns, filter_values, task_to_process)
                 task_to_process.row_idx = row_idx
-
-                # Extract and validate row data
+                
+                # Phase 3: Validate row data
                 if row_idx >= len(df):
-                    print(
-                        f"[DEBUG] Row index {row_idx} is out of bounds (df length: {len(df)}). Reloading Excel data."
-                    )
-                    # Reload Excel data to ensure we have the latest
-                    excel_manager.load_excel_data(
-                        config["excel_file"], config["excel_sheet"]
-                    )
-                    df = excel_manager.excel_data
-                    # Update cache
-                    self._excel_data_cache["data"] = df
-
-                    # Check again after reload
+                    # Reload Excel data if row index is out of bounds
+                    self._reload_excel_data(excel_manager, config)
+                    df = self._excel_data_cache["data"]
+                    
                     if row_idx >= len(df):
                         raise Exception(
                             f"Row index {row_idx} is still out of bounds after reloading Excel data (df length: {len(df)})"
                         )
-
+                
                 row_data = df.iloc[row_idx]
-                try:
-                    self._validate_row_data(row_data, filter_columns, filter_values)
-                except Exception as e:
-                    print(f"[DEBUG] Row data validation error: {str(e)}")
-                    raise Exception(f"Row data validation failed: {str(e)}")
-
-                # Create template data from row data efficiently
+                self._validate_row_data(row_data, filter_columns, filter_values)
+                
+                # Phase 4: Create template data
                 template_data = self._create_template_data(
                     row_data, filter_columns, filter_values, row_idx
                 )
-
-                # Add processed_folder to template data
                 template_data["processed_folder"] = config["processed_folder"]
-
-                # Process steps with individual try-except blocks to allow partial success
-
-                # Step 1: Generate output path
-                processed_path = None
-                try:
-                    processed_path = pdf_manager.generate_output_path(
-                        config["output_template"], template_data
-                    )
-                    print(f"[DEBUG] Step 1 - Generated output path: {processed_path}")
-                except Exception as e:
-                    print(f"[DEBUG] Error generating output path: {str(e)}")
-                    raise Exception(f"Failed to generate output path: {str(e)}")
-
-                # Step 2: Update Excel hyperlink
+                
+                # Phase 5: Process PDF
+                processed_path = self._generate_output_path(pdf_manager, config, template_data)
+                
+                # Try to update Excel hyperlink, but continue even if it fails
                 try:
                     original_link = self._update_excel_hyperlink(
                         excel_manager,
@@ -167,52 +101,106 @@ class ProcessingThread(QThread):
                         filter_columns[1] if len(filter_columns) > 1 else None,
                         task_to_process,
                     )
-                    print(
-                        f"[DEBUG] Step 2 - Updated Excel hyperlink, original: {original_link}"
-                    )
+                    print(f"[DEBUG] Updated Excel hyperlink, original: {original_link}")
                 except Exception as e:
                     print(f"[DEBUG] Warning - Excel hyperlink update failed: {str(e)}")
-                    # Continue even if hyperlink update fails
-
-                # Step 3: Process the PDF
-                try:
-                    pdf_manager.process_pdf(
-                        task=task_to_process,
-                        template_data=template_data,
-                        processed_folder=config["processed_folder"],
-                        output_template=config["output_template"],
-                    )
-                    print("[DEBUG] Step 3 - PDF processed successfully")
-
-                    # Set completed status before emitting signal
-                    task_to_process.status = "completed"
-                    task_to_process.end_time = datetime.now()
-
-                    # Task completed successfully
-                    self.task_completed.emit(task_id, "completed")
-                    print(f"[DEBUG] Task {task_id} completed successfully")
-
-                except Exception as e:
-                    print(f"[DEBUG] Error processing PDF: {str(e)}")
-                    raise Exception(f"PDF processing failed: {str(e)}")
-
+                    # Continue processing even if hyperlink update fails
+                
+                # Process the PDF
+                self._process_pdf(pdf_manager, task_to_process, template_data, config)
+                
+                # Update task status and emit completion signal
+                task_to_process.status = "completed"
+                task_to_process.end_time = datetime.now()
+                self.task_completed.emit(task_id, "completed")
+                print(f"[DEBUG] Task {task_id} completed successfully")
+                
             except Exception as e:
                 error_msg = str(e)
                 print(f"[DEBUG] Task processing error: {error_msg}")
-
-                # Update task status before emitting signal
+                
+                # Update task status and emit failure signal
                 if task_id in self.tasks:
                     self.tasks[task_id].status = "failed"
                     self.tasks[task_id].error_msg = error_msg
                     self.tasks[task_id].end_time = datetime.now()
-
-                # Emit failure signal with the actual error message
+                
                 self.task_failed.emit(task_id, error_msg)
                 print(f"[DEBUG] Task {task_id} failed: {error_msg}")
-
+                
             finally:
                 # Small delay to prevent CPU overuse
                 time.sleep(0.05)  # Reduced from 0.1 for better throughput
+    
+    def _get_next_pending_task(self):
+        """Find the next pending task in the queue."""
+        for task_id, task in self.tasks.items():
+            if task.status == "pending":
+                task.status = "processing"
+                return task, task_id
+        return None, None
+    
+    def _get_required_components(self):
+        """Get the required components for processing."""
+        parent = self.parent()
+        if not parent or not hasattr(parent, "config_manager"):
+            raise Exception("Could not access configuration")
+        
+        config = parent.config_manager.get_config()
+        excel_manager = parent.excel_manager
+        pdf_manager = parent.pdf_manager
+        
+        return config, excel_manager, pdf_manager
+    
+    def _validate_config(self, config):
+        """Validate that all required configurations are present."""
+        required_configs = [
+            "processed_folder",
+            "output_template",
+            "excel_file",
+            "excel_sheet",
+        ]
+        missing_configs = [
+            cfg for cfg in required_configs if not config.get(cfg)
+        ]
+        if missing_configs:
+            raise Exception(
+                f"Missing required configuration: {', '.join(missing_configs)}"
+            )
+    
+    def _reload_excel_data(self, excel_manager, config):
+        """Reload Excel data and update the cache."""
+        excel_manager.load_excel_data(
+            config["excel_file"], config["excel_sheet"]
+        )
+        self._excel_data_cache["data"] = excel_manager.excel_data
+        print("[DEBUG] Reloaded Excel data")
+    
+    def _generate_output_path(self, pdf_manager, config, template_data):
+        """Generate the output path for the processed PDF."""
+        try:
+            processed_path = pdf_manager.generate_output_path(
+                config["output_template"], template_data
+            )
+            print(f"[DEBUG] Generated output path: {processed_path}")
+            return processed_path
+        except Exception as e:
+            print(f"[DEBUG] Error generating output path: {str(e)}")
+            raise Exception(f"Failed to generate output path: {str(e)}")
+    
+    def _process_pdf(self, pdf_manager, task, template_data, config):
+        """Process the PDF file."""
+        try:
+            pdf_manager.process_pdf(
+                task=task,
+                template_data=template_data,
+                processed_folder=config["processed_folder"],
+                output_template=config["output_template"],
+            )
+            print("[DEBUG] PDF processed successfully")
+        except Exception as e:
+            print(f"[DEBUG] Error processing PDF: {str(e)}")
+            raise Exception(f"PDF processing failed: {str(e)}")
 
     def _ensure_excel_data_loaded(self, excel_manager, config):
         """Ensure Excel data is loaded, using cache if possible."""
