@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, Tuple
+from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget,
     QLabel,
@@ -212,8 +212,3 @@ class PDFViewer(QWidget):
                 self.zoom_level = level / 100
                 self.pdf_view.setZoomFactor(self.zoom_level)
                 break
-
-    def get_visible_rect(self) -> Tuple[int, int, int, int]:
-        """Get the currently visible rectangle in the viewer."""
-        viewport = self.pdf_view.viewport()
-        return (0, 0, viewport.width(), viewport.height())
