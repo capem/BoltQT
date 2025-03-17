@@ -239,7 +239,7 @@ class ProcessingThread(QThread):
             filter_columns.append(config[column_key])
         return filter_columns
 
-    def _create_new_row(self, filter_columns, filter_values, filter2_value):
+    def _create_new_row(self, filter_columns, filter_values):
         """Create a new Excel row with the given filter values.
         
         Args:
@@ -258,9 +258,6 @@ class ProcessingThread(QThread):
             config = parent.config_manager.get_config()
 
         # Create a new row with the filter values
-        filter_values_copy = filter_values.copy()
-        filter_values_copy[1] = filter2_value  # Use the raw value without formatting
-
         # Use the excel manager to add the new row
         excel_manager = None
         if parent and hasattr(parent, "excel_manager"):
@@ -275,65 +272,35 @@ class ProcessingThread(QThread):
             config["excel_file"],
             config["excel_sheet"],
             filter_columns,
-            filter_values_copy,
+            filter_values,
         )
 
         # Update the cached DataFrame to include the new row
         self._excel_data_cache["data"] = excel_manager.excel_data
 
-        # Update filter2 value with formatted value including row info
-        if parent and hasattr(parent, "_format_filter2_value"):
-            filter_values[1] = parent._format_filter2_value(
-                filter2_value, new_row_idx, False
-            )
-
-        print(f"[DEBUG] Added new row {new_row_idx} for filter2 value '{filter2_value}'")
+        print(f"[DEBUG] Added new row {new_row_idx} for filter2 value '{filter_values[1]}'")
         return new_row_idx
 
     def _find_matching_row(self, df, filter_columns, filter_values, task=None):
-        """Find or create a matching row in Excel data based on filter values.
+        """Find or create a matching row in Excel data.
 
         Args:
             df: Pandas DataFrame containing Excel data
-            filter_columns: List of column names to filter on
-            filter_values: List of values to filter by
-            task: Optional PDFTask containing pre-set row information
+            filter_columns: List of column names
+            filter_values: List of filter values
+            task: Optional PDFTask containing row information
 
         Returns:
-            int: Index of the matching or newly created row
-        
-        Raises:
-            Exception: If required filters are missing or row creation fails
+            int: Row index
         """
-        if len(filter_values) < 2 or len(filter_columns) < 2:
-            raise Exception("At least two filter values are required")
-
-        # Check if task has a valid pre-set row_idx
+        # Trust task.row_idx if valid bounds
         if task and task.row_idx >= 0 and task.row_idx < len(df):
-            # Verify the row contains the expected filter2 value
-            filter2_column = filter_columns[1]
-            filter2_value = filter_values[1]
-            actual_value = str(df.iloc[task.row_idx][filter2_column])
-
-            if actual_value == filter2_value:
-                print(f"[DEBUG] Using pre-set task row_idx {task.row_idx} (Excel row {task.row_idx + 2})")
-                return task.row_idx
-            else:
-                print(f"[DEBUG] Pre-set row_idx {task.row_idx} invalid - creating new row")
-                # Create new row immediately since pre-set row was invalid
-                return self._create_new_row(filter_columns, filter_values, filter2_value)
-
-        # No pre-set row or invalid - create new row
-        filter2_value = filter_values[1]
-        # If filter2 has Excel row info, clean it
-        if isinstance(filter2_value, str) and "⟨Excel Row:" in filter2_value:
-            parent = self.parent()
-            if parent and hasattr(parent, "_parse_filter2_value"):
-                clean_value, _ = parent._parse_filter2_value(filter2_value)
-                filter2_value = clean_value
-
-        print(f"[DEBUG] Creating new row for filter2 value: {filter2_value}")
-        return self._create_new_row(filter_columns, filter_values, filter2_value)
+            print(f"[DEBUG] Using task row_idx {task.row_idx} (Excel row {task.row_idx + 2})")
+            return task.row_idx
+        else:
+            # Create new row with clean filter2 value
+            print("[DEBUG] Creating new row for")
+            return self._create_new_row(filter_columns, filter_values)
 
     def _normalize_date(self, value, date_formats):
         """Normalize a date value to ISO format (YYYY-MM-DD) for consistent comparison.
