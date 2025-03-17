@@ -20,8 +20,10 @@ class PDFManager(QObject):
         self._current_path: Optional[str] = None
         self._rotation: int = 0
         self.template_manager = TemplateManager()
-        # Set to track processed files that couldn't be deleted
+        # Set to track processed and opened files
         self._processed_files = set()
+        self._open_files = set()
+        self._viewer_ref = None
 
     def _normalize_path(self, path: str) -> str:
         """Normalize a path for consistent comparison.
@@ -267,10 +269,6 @@ class PDFManager(QObject):
             # If all attempts failed, log it but continue
             if last_error:
                 print("[DEBUG] Cleaned up PDF references despite close errors")
-
-    def clear_cache(self) -> None:
-        """Clear any cached data."""
-        self.close_current_pdf()
 
     def generate_output_path(self, template: str, data: Dict[str, Any]) -> str:
         """Generate output path based on template and data.
@@ -532,32 +530,10 @@ class PDFManager(QObject):
                 print(f"[DEBUG] Removed original PDF from source folder: {file_path}")
                 return True
             except Exception as e:
-                if attempt < max_attempts - 1:
-                    print(
-                        f"[DEBUG] Removal attempt {attempt + 1} failed: {str(e)}, retrying in {delay}s..."
-                    )
-                    time.sleep(delay)
-                else:
-                    # Last attempt failed, try to rename the file instead
-                    try:
-                        # Create a new filename with .processed.pdf
-                        dir_name = os.path.dirname(file_path)
-                        base_name = os.path.basename(file_path)
-                        name_without_ext, ext = os.path.splitext(base_name)
-                        new_name = f"{name_without_ext}.processed{ext}"
-                        new_path = os.path.join(dir_name, new_name)
-
-                        # Try to rename the file
-                        os.rename(file_path, new_path)
-                        print(
-                            f"[DEBUG] Could not remove file, renamed instead to: {new_path}"
-                        )
-                        return True
-                    except Exception as rename_error:
-                        # If rename also fails, re-raise the original exception
-                        print(f"[DEBUG] Failed to rename file: {str(rename_error)}")
-                        raise e
-
+                print(
+                    f"[DEBUG] Removal attempt {attempt + 1} failed: {str(e)}, retrying in {delay}s..."
+                )
+                time.sleep(delay)
         return False
 
     def revert_pdf_location(self, task: PDFTask) -> bool:
