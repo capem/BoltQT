@@ -229,6 +229,8 @@ class ProcessingTab(QWidget):
             fuzzy.value_selected.connect(
                 lambda idx=i - 1: self._on_filter_selected(idx)
             )
+            # Connect text_changed signal to update process button state
+            fuzzy.text_changed.connect(self._update_process_button)
             layout.addWidget(fuzzy)
 
             # Add to main layout

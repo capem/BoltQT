@@ -14,8 +14,9 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 class FuzzySearchFrame(QWidget):
     """Frame containing a fuzzy search entry and listbox."""
 
-    # Signal emitted when a value is selected
-    value_selected = pyqtSignal()
+    # Signals
+    value_selected = pyqtSignal()  # Emitted when a value is selected
+    text_changed = pyqtSignal()    # Emitted when the text input changes
 
     def __init__(
         self,
@@ -99,6 +100,7 @@ class FuzzySearchFrame(QWidget):
         """Bind event handlers to widgets."""
         # Entry events
         self.entry.textChanged.connect(self._on_text_changed)
+        self.entry.textChanged.connect(lambda: self.text_changed.emit())  # Emit text_changed signal
         self.entry.returnPressed.connect(self._select_top_match)
 
         # Listbox events
