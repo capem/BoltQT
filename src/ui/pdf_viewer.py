@@ -5,7 +5,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QVBoxLayout,
 )
-from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
 from PyQt6.QtCore import Qt, QEvent
 from ..utils.pdf_manager import PDFManager
@@ -32,16 +31,13 @@ class PDFViewer(QWidget):
         self.loading_label.setStyleSheet("background: none; border: none;")
 
         # Initialize PDF components
-        self.pdf_document = QPdfDocument(self)
+        self.pdf_document = None  # Will be set from PDFManager's document
 
         # Create and configure PDF viewer widget
         self.pdf_view = QPdfView(self)
         self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
         self.pdf_view.setZoomFactor(self.zoom_level)
         self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
-
-        # Set up document connections
-        self.pdf_view.setDocument(self.pdf_document)
 
         # Enable touch and wheel events
         viewport = self.pdf_view.viewport()
@@ -109,21 +105,24 @@ class PDFViewer(QWidget):
         It should be called before attempting to remove or modify the PDF file.
         """
         try:
-            # Clear view's document reference first
-            self.pdf_view.setDocument(None)
-
-            # Close and cleanup document
             if self.pdf_document:
-                self.pdf_document.close()
-                self.pdf_document.deleteLater()
-                self.pdf_document = None
+                # First remove document from view to prevent access during cleanup
+                self.pdf_view.setDocument(None)
+                
+                # Only close/delete if it's not the manager's current document
+                if self.pdf_document is not self.pdf_manager._current_doc:
+                    try:
+                        self.pdf_document.close()
+                        self.pdf_document.deleteLater()
+                    except Exception as e:
+                        print(f"[DEBUG] Non-critical error cleaning up old document: {str(e)}")
 
-            # Reset state
+            # Clear references
+            self.pdf_document = None
             self.current_pdf = None
 
         except Exception as e:
             print(f"[DEBUG] Error during PDF cleanup: {str(e)}")
-            # Continue with cleanup even if there's an error
 
     def display_pdf(
         self,
@@ -145,10 +144,8 @@ class PDFViewer(QWidget):
             self.loading_label.raise_()
 
         try:
-            # Clear current display and ensure proper cleanup
-            self.clear_pdf()
-
             if not pdf_path:
+                self.clear_pdf()
                 return
 
             # Update zoom level if provided
@@ -156,17 +153,22 @@ class PDFViewer(QWidget):
                 self.zoom_level = zoom
                 self.pdf_view.setZoomFactor(self.zoom_level)
 
-            # Create new document instance to ensure clean state
-            if self.pdf_document:
-                self.pdf_document.deleteLater()
-            self.pdf_document = QPdfDocument(self)
-            self.pdf_view.setDocument(self.pdf_document)
-
             # Try opening the PDF with retries
             for attempt in range(retry_count):
                 try:
-                    # Load the document directly with Qt
-                    self.pdf_document.load(pdf_path)
+                    # First load via PDFManager to get new document
+                    if not self.pdf_manager.open_pdf(pdf_path):
+                        raise Exception("Failed to open PDF via PDFManager")
+                    
+                    # Store new document reference before clearing old one
+                    new_document = self.pdf_manager._current_doc
+                    
+                    # Now safe to clear old document
+                    self.clear_pdf()
+                    
+                    # Set new document
+                    self.pdf_document = new_document
+                    self.pdf_view.setDocument(self.pdf_document)
 
                     # Update current PDF path only after successful load
                     self.current_pdf = pdf_path

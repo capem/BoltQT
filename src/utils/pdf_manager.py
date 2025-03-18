@@ -221,11 +221,16 @@ class PDFManager(QObject):
             # Close any open document
             self.close_current_pdf()
 
-            # Create new document
+            # Create new document and load PDF
             self._current_doc = QPdfDocument(self)
             self._current_doc.load(pdf_path)
             self._current_path = pdf_path
             self._rotation = 0
+
+            # Update viewer if connected
+            if self._viewer_ref and self._viewer_ref.pdf_view:
+                self._viewer_ref.pdf_document = self._current_doc
+                self._viewer_ref.pdf_view.setDocument(self._current_doc)
 
             return True
 
