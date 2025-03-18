@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QDialogButtonBox,
     QMessageBox,
+    QProgressBar,
+    QLabel,
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt6.QtGui import QColor
@@ -105,6 +107,34 @@ class QueueDisplay(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
 
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("Batch Progress: %p%")
+        layout.addWidget(self.progress_bar)
+
+        # Status counters
+        self.counters = QWidget()
+        counter_layout = QHBoxLayout(self.counters)
+        counter_layout.setContentsMargins(0, 5, 0, 15)
+
+        self.total_label = QLabel("Total: 0")
+        self.completed_label = QLabel("Completed: 0")
+        self.failed_label = QLabel("Failed: 0")
+        self.skipped_label = QLabel("Skipped: 0")
+
+        for label in [
+            self.total_label,
+            self.completed_label,
+            self.failed_label,
+            self.skipped_label,
+        ]:
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            counter_layout.addWidget(label)
+
+        layout.addWidget(self.counters)
+
         # Create table
         self.table = QTableView()
         self.model = QueueTableModel()
@@ -157,6 +187,20 @@ class QueueDisplay(QWidget):
         """Update the display with new task data."""
         self.tasks = tasks
         self.model.update_tasks(tasks)
+
+        # Update progress and counters
+        total = len(tasks)
+        completed = sum(1 for t in tasks.values() if t.status == "completed")
+        failed = sum(1 for t in tasks.values() if t.status == "failed")
+        skipped = sum(1 for t in tasks.values() if t.status == "skipped")
+
+        progress = ((completed + skipped) / total * 100) if total > 0 else 0
+        self.progress_bar.setValue(int(progress))
+
+        self.total_label.setText(f"Total: {total}")
+        self.completed_label.setText(f"Completed: {completed}")
+        self.failed_label.setText(f"Failed: {failed}")
+        self.skipped_label.setText(f"Skipped: {skipped}")
 
     def _create_context_menu(self, position):
         """Create and show context menu."""
