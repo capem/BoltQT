@@ -1,8 +1,7 @@
 from __future__ import annotations
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Any, Callable
 from datetime import datetime
 import time
-import pandas as pd
 import os
 
 from PyQt6.QtWidgets import (
@@ -14,451 +13,13 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QApplication,
 )
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer
 
 from ..utils import ConfigManager, ExcelManager, PDFManager, PDFTask
+from ..utils.processing_thread import ProcessingThread
 from .fuzzy_search import FuzzySearchFrame
 from .queue_display import QueueDisplay
 from .pdf_viewer import PDFViewer
-
-
-class ProcessingThread(QThread):
-    """Background thread for processing PDFs."""
-
-    task_completed = pyqtSignal(str, str)  # task_id, status
-    task_failed = pyqtSignal(str, str)  # task_id, error_message
-
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self.tasks: Dict[str, PDFTask] = {}
-        self.running = True
-        # Cache for Excel data to avoid reloading for every task
-        self._excel_data_cache = {
-            "file": None,
-            "sheet": None,
-            "data": None,
-            "columns": None,
-        }
-
-    def run(self) -> None:
-        """Process tasks in the queue."""
-        while self.running:
-            # Find next pending task
-            task_to_process, task_id = self._get_next_pending_task()
-
-            if not task_to_process:
-                time.sleep(0.1)
-                continue
-
-            try:
-                print(f"[DEBUG] Processing task {task_id}: {task_to_process.pdf_path}")
-
-                # Phase 1: Setup and validation
-                config, excel_manager, pdf_manager = self._get_required_components()
-                self._validate_config(config)
-
-                # Phase 2: Load Excel data and find matching row
-                self._ensure_excel_data_loaded(excel_manager, config)
-                df = self._excel_data_cache["data"]
-
-                filter_columns = self._get_filter_columns(
-                    config, task_to_process.filter_values
-                )
-                filter_values = task_to_process.filter_values.copy()
-
-                row_idx = self._find_matching_row(
-                    df, filter_columns, filter_values, task_to_process
-                )
-                task_to_process.row_idx = row_idx
-
-                # Phase 3: Validate row data
-                if row_idx >= len(df):
-                    # Reload Excel data if row index is out of bounds
-                    self._reload_excel_data(excel_manager, config)
-                    df = self._excel_data_cache["data"]
-
-                    if row_idx >= len(df):
-                        raise Exception(
-                            f"Row index {row_idx} is still out of bounds after reloading Excel data (df length: {len(df)})"
-                        )
-
-                row_data = df.iloc[row_idx]
-
-                # Phase 4: Create template data
-                template_data = self._create_template_data(
-                    row_data, filter_columns, filter_values, row_idx
-                )
-                template_data["processed_folder"] = config["processed_folder"]
-
-                # Phase 5: Process PDF
-                processed_path = self._generate_output_path(
-                    pdf_manager, config, template_data
-                )
-
-                # Try to update Excel hyperlink, but continue even if it fails
-                try:
-                    original_link = self._update_excel_hyperlink(
-                        excel_manager,
-                        config,
-                        row_idx,
-                        processed_path,
-                        filter_columns[1] if len(filter_columns) > 1 else None,
-                        task_to_process,
-                    )
-                    print(f"[DEBUG] Updated Excel hyperlink, original: {original_link}")
-                except Exception as e:
-                    print(f"[DEBUG] Warning - Excel hyperlink update failed: {str(e)}")
-                    # Continue processing even if hyperlink update fails
-
-                # Process the PDF
-                self._process_pdf(pdf_manager, task_to_process, template_data, config)
-
-                # Update task status and emit completion signal
-                task_to_process.status = "completed"
-                task_to_process.end_time = datetime.now()
-                self.task_completed.emit(task_id, "completed")
-                print(f"[DEBUG] Task {task_id} completed successfully")
-
-            except Exception as e:
-                error_msg = str(e)
-                print(f"[DEBUG] Task processing error: {error_msg}")
-
-                # Update task status and emit failure signal
-                if task_id in self.tasks:
-                    self.tasks[task_id].status = "failed"
-                    self.tasks[task_id].error_msg = error_msg
-                    self.tasks[task_id].end_time = datetime.now()
-
-                self.task_failed.emit(task_id, error_msg)
-                print(f"[DEBUG] Task {task_id} failed: {error_msg}")
-
-            finally:
-                # Small delay to prevent CPU overuse
-                time.sleep(0.05)  # Reduced from 0.1 for better throughput
-
-    def _get_next_pending_task(self):
-        """Find the next pending task in the queue."""
-        for task_id, task in self.tasks.items():
-            if task.status == "pending":
-                task.status = "processing"
-                return task, task_id
-        return None, None
-
-    def _get_required_components(self):
-        """Get the required components for processing."""
-        parent = self.parent()
-        if not parent or not hasattr(parent, "config_manager"):
-            raise Exception("Could not access configuration")
-
-        config = parent.config_manager.get_config()
-        excel_manager = parent.excel_manager
-        pdf_manager = parent.pdf_manager
-
-        return config, excel_manager, pdf_manager
-
-    def _validate_config(self, config):
-        """Validate that all required configurations are present."""
-        required_configs = [
-            "processed_folder",
-            "output_template",
-            "excel_file",
-            "excel_sheet",
-        ]
-        missing_configs = [cfg for cfg in required_configs if not config.get(cfg)]
-        if missing_configs:
-            raise Exception(
-                f"Missing required configuration: {', '.join(missing_configs)}"
-            )
-
-    def _reload_excel_data(self, excel_manager, config):
-        """Reload Excel data and update the cache."""
-        excel_manager.load_excel_data(config["excel_file"], config["excel_sheet"])
-        self._excel_data_cache["data"] = excel_manager.excel_data
-        print("[DEBUG] Reloaded Excel data")
-
-    def _generate_output_path(self, pdf_manager, config, template_data):
-        """Generate the output path for the processed PDF."""
-        try:
-            processed_path = pdf_manager.generate_output_path(
-                config["output_template"], template_data
-            )
-            print(f"[DEBUG] Generated output path: {processed_path}")
-            return processed_path
-        except Exception as e:
-            print(f"[DEBUG] Error generating output path: {str(e)}")
-            raise Exception(f"Failed to generate output path: {str(e)}")
-
-    def _process_pdf(self, pdf_manager, task, template_data, config):
-        """Process the PDF file."""
-        try:
-            pdf_manager.process_pdf(
-                task=task,
-                template_data=template_data,
-                processed_folder=config["processed_folder"],
-                output_template=config["output_template"],
-            )
-            print("[DEBUG] PDF processed successfully")
-        except Exception as e:
-            print(f"[DEBUG] Error processing PDF: {str(e)}")
-            raise Exception(f"PDF processing failed: {str(e)}")
-
-    def _ensure_excel_data_loaded(self, excel_manager, config):
-        """Ensure Excel data is loaded, using cache if possible."""
-        excel_file = config["excel_file"]
-        excel_sheet = config["excel_sheet"]
-
-        # Check if we need to reload the data
-        if (
-            self._excel_data_cache["file"] != excel_file
-            or self._excel_data_cache["sheet"] != excel_sheet
-            or self._excel_data_cache["data"] is None
-        ):
-            # Load new data
-            excel_manager.load_excel_data(excel_file, excel_sheet)
-
-            # Update cache
-            self._excel_data_cache["file"] = excel_file
-            self._excel_data_cache["sheet"] = excel_sheet
-            self._excel_data_cache["data"] = excel_manager.excel_data
-            # Pre-convert all string columns to strings to avoid repeated conversions
-            for col in self._excel_data_cache["data"].select_dtypes(
-                exclude=["datetime64"]
-            ):
-                self._excel_data_cache["data"][col] = self._excel_data_cache["data"][
-                    col
-                ].astype(str)
-
-    def _get_filter_columns(self, config, filter_values):
-        """Get filter columns based on filter values."""
-        filter_columns = []
-        for i in range(1, len(filter_values) + 1):
-            column_key = f"filter{i}_column"
-            if column_key not in config:
-                raise Exception(f"Missing filter column configuration for filter {i}")
-            filter_columns.append(config[column_key])
-        return filter_columns
-
-    def _create_new_row(self, filter_columns, filter_values):
-        """Create a new Excel row with the given filter values.
-
-        Args:
-            filter_columns: List of column names
-            filter_values: List of filter values
-            filter2_value: Clean filter2 value without formatting
-
-        Returns:
-            int: Index of the newly created row
-        """
-        parent = self.parent()
-
-        # Get configuration
-        config = {}
-        if parent and hasattr(parent, "config_manager"):
-            config = parent.config_manager.get_config()
-
-        # Create a new row with the filter values
-        # Use the excel manager to add the new row
-        excel_manager = None
-        if parent and hasattr(parent, "excel_manager"):
-            excel_manager = parent.excel_manager
-        elif hasattr(self, "excel_manager"):
-            excel_manager = self.excel_manager
-
-        if not excel_manager:
-            raise Exception("Excel manager not available")
-
-        new_row_data, new_row_idx = excel_manager.add_new_row(
-            config["excel_file"],
-            config["excel_sheet"],
-            filter_columns,
-            filter_values,
-        )
-
-        # Update the cached DataFrame to include the new row
-        self._excel_data_cache["data"] = excel_manager.excel_data
-
-        print(
-            f"[DEBUG] Added new row {new_row_idx} for filter2 value '{filter_values[1]}'"
-        )
-        return new_row_idx
-
-    def _find_matching_row(self, df, filter_columns, filter_values, task=None):
-        """Find or create a matching row in Excel data.
-
-        Args:
-            df: Pandas DataFrame containing Excel data
-            filter_columns: List of column names
-            filter_values: List of filter values
-            task: Optional PDFTask containing row information
-
-        Returns:
-            int: Row index
-        """
-        # Trust task.row_idx if valid bounds
-        if task and task.row_idx >= 0 and task.row_idx < len(df):
-            print(
-                f"[DEBUG] Using task row_idx {task.row_idx} (Excel row {task.row_idx + 2})"
-            )
-            return task.row_idx
-        else:
-            # Create new row with clean filter2 value
-            print("[DEBUG] Creating new row for")
-            return self._create_new_row(filter_columns, filter_values)
-
-    def _normalize_date(self, value, date_formats):
-        """Normalize a date value to ISO format (YYYY-MM-DD) for consistent comparison.
-
-        Returns:
-            The normalized date string, or None if parsing fails
-        """
-        # Already a datetime object
-        if isinstance(value, datetime):
-            return value.strftime("%Y-%m-%d")
-
-        # Try parsing as date string
-        value_str = str(value).strip()
-        for date_format in date_formats:
-            try:
-                parsed_date = datetime.strptime(value_str, date_format)
-                return parsed_date.strftime("%Y-%m-%d")
-            except (ValueError, TypeError):
-                continue
-
-        return None
-
-    def _format_date_value(self, value, date_formats):
-        """Format a date value for consistent comparison."""
-        if isinstance(value, datetime):
-            return value.strftime("%d/%m/%Y")
-
-        # Try parsing as date
-        for date_format in date_formats:
-            try:
-                parsed_date = datetime.strptime(str(value).strip(), date_format)
-                return parsed_date.strftime("%d/%m/%Y")
-            except (ValueError, TypeError):
-                continue
-
-        # Fall back to string representation
-        return str(value).strip()
-
-    def _create_template_data(
-        self, row_data, filter_columns, filter_values, row_idx=None
-    ):
-        """Create template data dictionary from row data and filter values.
-
-        Args:
-            row_data: DataFrame row
-            filter_columns: List of filter column names
-            filter_values: List of filter values
-            row_idx: Excel row index
-
-        Returns:
-            Dict with template data
-        """
-        template_data = {}
-        date_formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d"]
-
-        # Add filter values to template data
-        for i, (column, value) in enumerate(zip(filter_columns, filter_values), 1):
-            # For filter2, include Excel row in the value only if it's not already there
-            if i == 2 and row_idx is not None:
-                parent = self.parent()
-                if parent and hasattr(parent, "_format_filter2_value"):
-                    # Check if value already contains Excel Row information
-                    import re
-
-                    if not re.search(r"⟨Excel Row[:-]\s*\d+⟩", value):
-                        excel_row = (
-                            row_idx + 2
-                        )  # Convert to Excel row (1-based + header)
-                        formatted_value = value + f" ⟨Excel Row: {excel_row}⟩"
-                        template_data[f"filter{i}"] = formatted_value
-                    else:
-                        # Use value as is if it already has Excel Row info
-                        template_data[f"filter{i}"] = value
-                else:
-                    template_data[f"filter{i}"] = value
-            else:
-                template_data[f"filter{i}"] = value
-
-            template_data[column] = value
-
-            # Try to convert date string values to datetime objects
-            if isinstance(value, str):
-                for fmt in date_formats:
-                    try:
-                        date_obj = datetime.strptime(value, fmt)
-                        template_data[f"filter{i}_date"] = date_obj
-                        print(f"[DEBUG] Converted filter{i} to datetime: {date_obj}")
-                        break
-                    except ValueError:
-                        continue
-
-        # Get rest of the data from the row
-        for column in row_data.index:
-            if column not in template_data:
-                value = row_data[column]
-                template_data[column] = value
-
-                # Try to convert date values to datetime objects
-                if isinstance(value, str):
-                    for fmt in date_formats:
-                        try:
-                            date_obj = datetime.strptime(value, fmt)
-                            template_data[f"{column}_date"] = date_obj
-                            print(f"[DEBUG] Converted {column} to datetime: {date_obj}")
-                            break
-                        except ValueError:
-                            continue
-                elif isinstance(value, pd.Timestamp):
-                    # Convert pandas Timestamp to Python datetime
-                    template_data[f"{column}_date"] = value.to_pydatetime()
-                    print(f"[DEBUG] Converted pandas Timestamp {column} to datetime")
-
-        # Add the current date and time
-        template_data["current_date"] = datetime.now()
-
-        print(f"[DEBUG] Created template data with {len(template_data)} keys")
-        return template_data
-
-    def _update_excel_hyperlink(
-        self, excel_manager, config, row_idx, processed_path, filter_column, task
-    ):
-        """Update Excel hyperlink with error handling."""
-        try:
-            # Store original Excel row index in task
-            task.row_idx = row_idx
-
-            original_hyperlink = excel_manager.update_pdf_link(
-                config["excel_file"],
-                config["excel_sheet"],
-                row_idx,
-                processed_path,
-                filter_column,
-            )
-
-            # Store original hyperlink for potential revert operation
-            task.original_excel_hyperlink = original_hyperlink
-            task.original_pdf_location = task.pdf_path
-
-            # Also store the processed file location
-            task.processed_pdf_location = processed_path
-
-            print(
-                f"[DEBUG] Updated Excel hyperlink for row {row_idx}, original: {original_hyperlink}"
-            )
-
-            return original_hyperlink
-
-        except Exception as e:
-            print(f"Warning: Could not update Excel hyperlink: {str(e)}")
-            # Continue processing even if hyperlink update fails
-
-    def stop(self) -> None:
-        """Stop the processing thread."""
-        self.running = False
-        self.wait()
 
 
 class ProcessingTab(QWidget):
@@ -496,8 +57,12 @@ class ProcessingTab(QWidget):
         self.current_pdf_start_time: Optional[datetime] = None
         self.filter_frames = []
 
-        # Initialize processing thread before UI setup
-        self.processing_thread = ProcessingThread(self)
+        # Initialize processing thread with managers
+        self.processing_thread = ProcessingThread(
+            config_manager=self.config_manager,
+            excel_manager=self.excel_manager,
+            pdf_manager=self.pdf_manager,
+        )
         self.processing_thread.task_completed.connect(self._on_task_completed)
         self.processing_thread.task_failed.connect(self._on_task_failed)
         self.processing_thread.start()
@@ -686,16 +251,7 @@ class ProcessingTab(QWidget):
     def _format_filter2_value(
         self, value: str, row_idx: int, has_hyperlink: bool = False
     ) -> str:
-        """Format filter2 value with row number and checkmark if hyperlinked.
-
-        Args:
-            value: The original filter value
-            row_idx: The 0-based row index in Excel
-            has_hyperlink: Whether the corresponding Excel cell has a hyperlink
-
-        Returns:
-            Formatted string with checkmark (if applicable) and row information
-        """
+        """Format filter2 value with row number and checkmark if hyperlinked."""
         import re
 
         # Check if value already contains Excel Row information
@@ -710,14 +266,7 @@ class ProcessingTab(QWidget):
         return f"{prefix}{value} ⟨Excel Row: {row_idx + 2}⟩"
 
     def _parse_filter2_value(self, formatted_value: str) -> tuple[str, int]:
-        """Parse filter2 value to get original value and row number.
-
-        Args:
-            formatted_value: String in format "✓ value ⟨Excel Row: N⟩"
-
-        Returns:
-            tuple[str, int]: (original value without formatting, 0-based row index)
-        """
+        """Parse filter2 value to get original value and row number."""
         import re
 
         if not formatted_value:
@@ -739,11 +288,7 @@ class ProcessingTab(QWidget):
         return formatted_value, -1
 
     def _load_filter_values(self, filter_index: int = 0) -> None:
-        """Load values for a specific filter.
-
-        Args:
-            filter_index: Index of the filter to load values for (0-based)
-        """
+        """Load values for a specific filter."""
         try:
             config = self.config_manager.get_config()
             if not (config["excel_file"] and config["excel_sheet"]):
@@ -820,11 +365,7 @@ class ProcessingTab(QWidget):
             )
 
     def _on_filter_selected(self, filter_index: int) -> None:
-        """Handle selection in a filter.
-
-        Args:
-            filter_index: Index of the filter where selection occurred (0-based)
-        """
+        """Handle selection in a filter."""
         # Update process button state
         self._update_process_button()
 
@@ -847,7 +388,6 @@ class ProcessingTab(QWidget):
         else:
             # Move to process button and visually highlight it
             self.process_button.setFocus()
-            # The button will be highlighted by the focus style in Qt
         return "break"
 
     def _process_current_file(self) -> None:
