@@ -29,8 +29,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("LoadingScreen")
 
-# Set to False to disable performance logging in production
-ENABLE_PERF_LOGGING = True
+# Performance settings
+ENABLE_PERF_LOGGING = True  # Set to True only for debugging
 
 
 def log_performance(func):
@@ -69,13 +69,14 @@ class EnhancedLoadingScreen(QWidget):
     COLOR_TEXT_PROGRESS = QColor(127, 140, 141)  # #7f8c8d
     COLOR_BG_TRANSLUCENT = QColor(245, 245, 245, 200)
 
-    # Animation constants
-    SPINNER_UPDATE_MS = 30
-    PULSE_ANIMATION_MS = 1800
+    # Animation constants - optimized intervals
+    SPINNER_UPDATE_MS = 50  # Reduced update frequency (30ms -> 50ms)
+    PULSE_ANIMATION_MS = 2000  # Aligned with common animation intervals
     DOT_ANIMATION_MS = 1000
     FADE_IN_MS = 400
 
-    # Number of segments in the progress ring (reduced for performance)
+    # Performance optimization flags
+    ENABLE_PERF_LOGGING = False  # Disabled by default for production
 
     @log_performance
     def __init__(
@@ -105,9 +106,18 @@ class EnhancedLoadingScreen(QWidget):
         self._shadow_rect = None
         self._cached_bg_gradient = None
         self._cached_pulse_colors = {}
-
-        # Initialize layout, UI, and animations
+        self._cached_progress_gradient = None
+        
+        # Initialize dimensions first
         self._calculate_dimensions()
+        
+        # Cache fonts and metrics now that dimensions are calculated
+        self._percentage_font = QFont()
+        self._percentage_font.setPointSize(int(self.message_font_size * 0.8))
+        self._font_metrics = QFontMetrics(self._percentage_font)
+        self._text_height = self._font_metrics.height()
+
+        # Initialize UI and animations
         self._setup_ui()
         self._setup_animations()
 
@@ -165,14 +175,14 @@ class EnhancedLoadingScreen(QWidget):
     def resizeEvent(self, event) -> None:
         """Handle resize event to recalculate cached values."""
         super().resizeEvent(event)
-        # Reset cached values when the widget is resized
-        self._center_point = None
-        self._container_rect = None
-        self._shadow_rect = None
-        self._cached_bg_gradient = None
-        self._cached_pulse_colors = {}
+        if event.size() != event.oldSize():  # Only reset if size actually changed
+            self._center_point = None
+            self._container_rect = None
+            self._shadow_rect = None
+            self._cached_bg_gradient = None
+            # Keep pulse colors cache as it's opacity-based, not size-based
+            self._cached_progress_gradient = None
 
-    @log_performance
     def _setup_ui(self) -> None:
         """Set up the UI components using the calculated dimensions."""
         # Main layout
@@ -315,7 +325,7 @@ class EnhancedLoadingScreen(QWidget):
     @log_performance
     def paintEvent(self, event: Any) -> None:
         """Custom paint event to render all visual elements."""
-        start_time = time.time()
+        start_time = time.time() if ENABLE_PERF_LOGGING else 0
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -330,34 +340,14 @@ class EnhancedLoadingScreen(QWidget):
         # Draw translucent background
         painter.fillRect(self.rect(), self.COLOR_BG_TRANSLUCENT)
 
-        # Draw container with subtle shadow effect
-        container_time = time.time()
+        # Batch draw operations with minimal state changes
         self._draw_container(painter)
-        if ENABLE_PERF_LOGGING:
-            logger.debug(
-                f"_draw_container took {(time.time() - container_time) * 1000:.2f}ms"
-            )
-
-        # Draw pulsing background circle
-        pulse_time = time.time()
         self._draw_pulse_circle(painter)
-        if ENABLE_PERF_LOGGING:
-            logger.debug(
-                f"_draw_pulse_circle took {(time.time() - pulse_time) * 1000:.2f}ms"
-            )
-
-        # Draw progress bar
-        bar_time = time.time()
         self._draw_progress_bar(painter)
-        if ENABLE_PERF_LOGGING:
-            logger.debug(
-                f"_draw_progress_bar took {(time.time() - bar_time) * 1000:.2f}ms"
-            )
 
         if ENABLE_PERF_LOGGING:
-            logger.debug(
-                f"Total paintEvent took {(time.time() - start_time) * 1000:.2f}ms"
-            )
+            end_time = time.time()
+            logger.debug(f"paintEvent took {(end_time - start_time) * 1000:.2f}ms")
 
     def _draw_container(self, painter: QPainter) -> None:
         """Draw the main container with shadow effect."""
@@ -391,62 +381,48 @@ class EnhancedLoadingScreen(QWidget):
 
     def _draw_pulse_circle(self, painter: QPainter) -> None:
         """Draw the pulsing background circle for visual engagement."""
+        # Skip if opacity is effectively zero
+        if self._pulse_opacity < 0.01:
+            return
+
         # Use cached center point
         center = self._center_point
 
-        # Check if we have this pulse color/opacity cached
-        opacity_key = f"{self._pulse_opacity:.2f}"
+        # Round opacity to reduce cache entries (0.01 precision is sufficient)
+        opacity_key = round(self._pulse_opacity * 100) / 100
+
+        # Get or create cached colors
         if opacity_key not in self._cached_pulse_colors:
-            # Create new pulse color with current opacity
             pulse_color = QColor(self.COLOR_PRIMARY)
-            pulse_color.setAlphaF(self._pulse_opacity)
+            pulse_color.setAlphaF(opacity_key)
 
-            # Pre-calculate mid and transparent colors
-            mid_color = QColor(pulse_color)
-            mid_color.setAlphaF(pulse_color.alphaF() * 0.5)
-            transparent = QColor(pulse_color)
-            transparent.setAlphaF(0)
+            # Create gradient with fewer color stops
+            gradient = QRadialGradient(center, self._pulse_radius)
+            gradient.setColorAt(0, pulse_color)
+            gradient.setColorAt(
+                1, QColor(pulse_color.red(), pulse_color.green(), pulse_color.blue(), 0)
+            )
 
-            # Store in cache
-            self._cached_pulse_colors[opacity_key] = {
-                "main": pulse_color,
-                "mid": mid_color,
-                "transparent": transparent,
-            }
+            self._cached_pulse_colors[opacity_key] = gradient
 
-        # Use cached colors
-        colors = self._cached_pulse_colors[opacity_key]
-
-        # Create minimal radial gradient (only when needed)
-        gradient = QRadialGradient(center, self._pulse_radius)
-        gradient.setColorAt(0, colors["main"])
-        gradient.setColorAt(0.7, colors["mid"])
-        gradient.setColorAt(1, colors["transparent"])
-
-        # Draw with minimal state changes
+        # Use cached gradient directly
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(gradient)
+        painter.setBrush(self._cached_pulse_colors[opacity_key])
         painter.drawEllipse(center, self._pulse_radius, self._pulse_radius)
 
     def _draw_progress_bar(self, painter: QPainter) -> None:
         """Draw the horizontal progress bar below the spinner."""
         if self.progress <= 0:
-            return  # Don't draw if no progress
+            return
 
-        # Cache the center point
+        # Use cached center point and calculate positions once
         center = self._center_point
-
-        # Calculate progress bar position
-        bar_top = center.y() + self.progress_ring_radius + self.element_spacing * 2
-        bar_left = center.x() - (self.progress_bar_width / 2)
-
-        # Convert to integers for faster drawing
-        bar_top_int = int(bar_top)
-        bar_left_int = int(bar_left)
+        bar_top = int(center.y() + self.progress_ring_radius + self.element_spacing * 2)
+        bar_left = int(center.x() - (self.progress_bar_width / 2))
 
         # Draw background track
         track_rect = QRect(
-            bar_left_int, bar_top_int, self.progress_bar_width, self.progress_bar_height
+            bar_left, bar_top, self.progress_bar_width, self.progress_bar_height
         )
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self.COLOR_TRACK)
@@ -454,45 +430,39 @@ class EnhancedLoadingScreen(QWidget):
             track_rect, self.progress_bar_radius, self.progress_bar_radius
         )
 
-        # Draw filled portion if we have progress
+        # Draw progress fill if we have progress
         if self.progress > 0:
             fill_width = int(self.progress_bar_width * (self.progress / 100))
-            fill_rect = QRect(
-                bar_left_int, bar_top_int, fill_width, self.progress_bar_height
-            )
 
-            # Create gradient for filled portion - simple with only 2 color stops
-            gradient = QLinearGradient(
-                fill_rect.left(), fill_rect.top(), fill_rect.right(), fill_rect.top()
-            )
-            gradient.setColorAt(0, self.COLOR_PRIMARY)
-            gradient.setColorAt(1, self.COLOR_SECONDARY)
+            # Create or update cached gradient if needed
+            if self._cached_progress_gradient is None:
+                self._cached_progress_gradient = QLinearGradient(
+                    0, 0, self.progress_bar_width, 0
+                )
+                self._cached_progress_gradient.setColorAt(0, self.COLOR_PRIMARY)
+                self._cached_progress_gradient.setColorAt(1, self.COLOR_SECONDARY)
 
-            painter.setBrush(gradient)
+            fill_rect = QRect(bar_left, bar_top, fill_width, self.progress_bar_height)
+            painter.setBrush(self._cached_progress_gradient)
             painter.drawRoundedRect(
                 fill_rect, self.progress_bar_radius, self.progress_bar_radius
             )
 
-            # Draw percentage text
-            self._draw_percentage_text(painter, bar_left, bar_top)
+            self._draw_percentage_text(painter, float(bar_left), float(bar_top))
 
     def _draw_percentage_text(
         self, painter: QPainter, bar_left: float, bar_top: float
     ) -> None:
         """Draw the percentage text below the progress bar."""
         painter.setPen(QColor(50, 50, 50, 200))
-        percentage_font = QFont()
-        percentage_font.setPointSize(int(self.message_font_size * 0.8))
-        painter.setFont(percentage_font)
+        painter.setFont(self._percentage_font)
 
         percentage_text = f"{self.progress}%"
-        metrics = QFontMetrics(percentage_font)
-        text_width = metrics.horizontalAdvance(percentage_text)
-        text_height = metrics.height()
+        text_width = self._font_metrics.horizontalAdvance(percentage_text)
 
         # Position text in the center of the bar
         text_x = bar_left + (self.progress_bar_width - text_width) / 2
-        text_y = bar_top + self.progress_bar_height + text_height
+        text_y = bar_top + self.progress_bar_height + self._text_height
 
         painter.drawText(QPointF(text_x, text_y), percentage_text)
 
