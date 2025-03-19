@@ -333,6 +333,9 @@ class ProcessingTab(QWidget):
             # Get the dataframe
             df = self.excel_manager.excel_data
 
+            # Track row_idx from filter2 if we have it
+            row_idx = -1
+            
             # Apply filters for all previous filters
             filtered_df = df.copy()
             for i in range(filter_index):
@@ -341,16 +344,30 @@ class ProcessingTab(QWidget):
                 if not selected_value:
                     continue
 
-                # If this is filter2, parse it to get the clean value
+                # If this is filter2, parse it to get the clean value and row_idx
                 if i == 1:
-                    clean_value, _ = self._parse_filter2_value(selected_value)
+                    clean_value, parsed_row_idx = self._parse_filter2_value(selected_value)
                     selected_value = clean_value
-
-                # Apply filter
-                column = self.filter_frames[i]["column"]
-                filtered_df = filtered_df[
-                    filtered_df[column].astype(str) == selected_value
-                ]
+                    row_idx = parsed_row_idx
+                    print(f"[DEBUG] Parsed filter2: value='{clean_value}', row_idx={row_idx}")
+                # For filter3 and beyond, check row_idx
+                if i > 1:
+                    # Clear and return if no valid row_idx from filter2
+                    if row_idx < 0 or row_idx not in filtered_df.index:
+                        print(f"[DEBUG] No valid row_idx for filter {i+1}, clearing all subsequent filters")
+                        for idx in range(i, len(self.filter_frames)):
+                            self.filter_frames[idx]["fuzzy"].clear()
+                        return
+                    else:
+                        filtered_df = filtered_df.loc[[row_idx]]
+                        print(f"[DEBUG] Applied row_idx filter: {row_idx}")
+                        break
+                else:
+                    # Apply standard column filter for filter1 and filter2
+                    column = self.filter_frames[i]["column"]
+                    filtered_df = filtered_df[
+                        filtered_df[column].astype(str) == selected_value
+                    ]
 
             # Get values for the current filter
             column = self.filter_frames[filter_index]["column"]
@@ -378,7 +395,23 @@ class ProcessingTab(QWidget):
                 formatted_values.sort()
                 values = formatted_values
             else:
-                # For other filters, keep using unique values
+                # For filter3 and beyond, must have valid row_idx from filter2
+                if filter_index > 1:
+                    filter2_value = self.filter_frames[1]["fuzzy"].get()
+                    if not filter2_value:
+                        print("[DEBUG] No filter2 value selected, keeping subsequent filters empty")
+                        return
+                    
+                    _, row_idx = self._parse_filter2_value(filter2_value)
+                    if row_idx < 0 or row_idx not in filtered_df.index:
+                        print(f"[DEBUG] No valid row_idx from filter2, keeping filter {filter_index + 1} empty")
+                        return
+                    
+                    # Use only the specific row for valid row_idx
+                    filtered_df = filtered_df.loc[[row_idx]]
+                    print(f"[DEBUG] Using row_idx {row_idx} for filter {filter_index + 1}")
+
+                # Get unique values from filtered data
                 values = sorted(filtered_df[column].astype(str).unique().tolist())
 
             # Update the fuzzy search values
