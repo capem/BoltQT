@@ -229,7 +229,6 @@ class EnhancedLoadingScreen(QWidget):
         # Spinner rotation timer
         self.spinner_timer = QTimer(self)
         self.spinner_timer.timeout.connect(self._update_spinner)
-        self.spinner_timer.start(self.SPINNER_UPDATE_MS)
 
         # Create all animations
         self._create_animation(
@@ -238,7 +237,6 @@ class EnhancedLoadingScreen(QWidget):
             self.pulse_max_radius,
             self.PULSE_ANIMATION_MS,
         )
-        self._create_animation(b"pulseOpacity", 0.6, 0.0, self.PULSE_ANIMATION_MS)
         self._create_animation(b"dots", 0, 3, self.DOT_ANIMATION_MS)
         self._create_animation(
             b"splash_opacity",
@@ -283,33 +281,6 @@ class EnhancedLoadingScreen(QWidget):
         self._splash_opacity = opacity
         self.update()
 
-    @pyqtProperty(int)
-    def dots(self) -> int:
-        return self._dots
-
-    @dots.setter
-    def dots(self, value: int) -> None:
-        self._dots = value
-        self._update_dots()
-
-    @pyqtProperty(float)
-    def pulseRadius(self) -> float:
-        return self._pulse_radius
-
-    @pulseRadius.setter
-    def pulseRadius(self, radius: float) -> None:
-        self._pulse_radius = radius
-        self.update()
-
-    @pyqtProperty(float)
-    def pulseOpacity(self) -> float:
-        return self._pulse_opacity
-
-    @pulseOpacity.setter
-    def pulseOpacity(self, opacity: float) -> None:
-        self._pulse_opacity = opacity
-        self.update()
-
     def _update_dots(self) -> None:
         """Update the loading text with animated dots."""
         dots_text = "." * self._dots
@@ -342,12 +313,12 @@ class EnhancedLoadingScreen(QWidget):
 
         # Batch draw operations with minimal state changes
         self._draw_container(painter)
-        self._draw_pulse_circle(painter)
         self._draw_progress_bar(painter)
 
         if ENABLE_PERF_LOGGING:
             end_time = time.time()
             logger.debug(f"paintEvent took {(end_time - start_time) * 1000:.2f}ms")
+        logger.debug("paintEvent - end")
 
     def _draw_container(self, painter: QPainter) -> None:
         """Draw the main container with shadow effect."""
@@ -465,41 +436,3 @@ class EnhancedLoadingScreen(QWidget):
         text_y = bar_top + self.progress_bar_height + self._text_height
 
         painter.drawText(QPointF(text_x, text_y), percentage_text)
-
-
-# Example of how to use the enhanced loading screen
-class LoadingScreenDemo:
-    @staticmethod
-    @log_performance
-    def create_and_show_loading_screen(
-        parent=None, app_name="File Organizer"
-    ) -> EnhancedLoadingScreen:
-        """Create and show a loading screen with a simulated loading process."""
-        loading_screen = EnhancedLoadingScreen(parent, app_name)
-
-        # Center on screen
-        screen_geometry = loading_screen.screen().geometry()
-        x = (screen_geometry.width() - loading_screen.width()) // 2
-        y = (screen_geometry.height() - loading_screen.height()) // 2
-        loading_screen.move(x, y)
-
-        # Show the loading screen
-        loading_screen.show()
-
-        # Set up a timer for simulated progress updates
-        progress_timer = QTimer(loading_screen)
-        progress = 0
-
-        def update_progress():
-            nonlocal progress
-            progress += 1
-            if progress <= 100:
-                loading_screen.set_progress(progress)
-            else:
-                progress_timer.stop()
-                # Close loading screen or transition to main app here
-
-        progress_timer.timeout.connect(update_progress)
-        progress_timer.start(50)  # Update every 50ms
-
-        return loading_screen
