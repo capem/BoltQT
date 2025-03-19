@@ -232,13 +232,6 @@ class EnhancedLoadingScreen(QWidget):
 
         # Create all animations
         self._create_animation(
-            b"pulseRadius",
-            self.pulse_min_radius,
-            self.pulse_max_radius,
-            self.PULSE_ANIMATION_MS,
-        )
-        self._create_animation(b"dots", 0, 3, self.DOT_ANIMATION_MS)
-        self._create_animation(
             b"splash_opacity",
             0.0,
             1.0,
