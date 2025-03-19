@@ -3,6 +3,7 @@ from typing import Dict, Optional, Tuple, List, Any
 import os
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.worksheet.hyperlink import Hyperlink
 from PyQt6.QtCore import QObject
 from shutil import copy2
 from os import path, remove
@@ -221,40 +222,18 @@ class ExcelManager(QObject):
                     f"[DEBUG] path is on mount '{pdf_mount}', start on mount '{excel_mount}'"
                 )
 
-            # Update hyperlink (handle different openpyxl versions)
-            try:
-                # Method 1: Using Hyperlink class (newer versions of openpyxl)
-                from openpyxl.worksheet.hyperlink import Hyperlink
+            # Update hyperlink using Excel formula and styling
 
-                try:
-                    hyperlink = Hyperlink(ref=cell.coordinate, target=target_path)
-                    # For compatibility with different versions, try to add target_mode attribute
-                    # if it doesn't exist in the constructor
-                    hyperlink.target_mode = "file"
-                    cell.hyperlink = hyperlink
-                    print(f"[DEBUG] Updated hyperlink using newer API: {target_path}")
-                except TypeError as e:
-                    # Try the older API if the newer one fails
-                    print(
-                        f"[DEBUG] Newer hyperlink API failed: {str(e)}, trying older API"
-                    )
-                    raise e
-            except Exception as e:
-                try:
-                    # Method 2: Direct assignment (older versions)
-                    cell.hyperlink = target_path
-                    print(
-                        f"[DEBUG] Updated hyperlink using direct assignment: {target_path}"
-                    )
-                except Exception as e2:
-                    # Method 3: Last resort - set the display text to the path
-                    print(
-                        f"[DEBUG] Hyperlink methods failed: {str(e)}, {str(e2)}. Setting display text instead."
-                    )
-                    cell.value = f"Link: {target_path}"
+            # Extract original value or use existing cell value
+            hyperlink = Hyperlink(ref=cell.coordinate, target=target_path)
+
+            hyperlink.target_mode = "file"
+            cell.hyperlink = hyperlink
+            cell.style = "Hyperlink"
 
             # Save workbook
             wb.save(file_path)
+            print(f"[DEBUG] Set HYPERLINK formula: {cell.value}")
             print("[DEBUG] Excel file saved successfully")
 
             # Update cache
@@ -295,10 +274,6 @@ class ExcelManager(QObject):
             print(
                 f"[DEBUG] Original hyperlink: {original_hyperlink}, Original value: {original_value}"
             )
-
-            # Load workbook
-            from openpyxl import load_workbook
-            from openpyxl.worksheet.hyperlink import Hyperlink
 
             wb = load_workbook(excel_file)
             ws = wb[sheet_name]
@@ -521,13 +496,6 @@ class ExcelManager(QObject):
                 template_row = new_row - 1
                 print(f"[DEBUG] Using template row {template_row} for formatting")
 
-                for col_idx in range(1, len(header_row) + 1):
-                    template_cell = ws.cell(row=template_row, column=col_idx)
-                    new_cell = ws.cell(row=new_row, column=col_idx)
-                    # Copy number format and style
-                    new_cell.number_format = template_cell.number_format
-                    new_cell._style = template_cell._style
-
                 # Second pass: Set values with proper type conversion
                 for col, val in zip(columns, values):
                     col_idx = col_indices[col]
@@ -570,18 +538,16 @@ class ExcelManager(QObject):
                             new_cell.value = val
                     elif "MNT" in col.upper() or "MONTANT" in col.upper():
                         try:
-                            # Handle number format (comma as decimal separator)
-                            if isinstance(val, str):
-                                # Replace comma with dot for conversion, handle thousands separator
-                                num_str = val.replace(" ", "").replace(",", ".")
-                                num_val = float(num_str)
-                                new_cell.value = num_val
-                            else:
-                                new_cell.value = float(val)
-                        except (ValueError, TypeError):
+                            # Handle number format
+                            num_str = val.replace(" ", "").replace(",", ".")
+                            num_val = float(num_str)
+                            new_cell.value = num_val
+                            new_cell.number_format = '_-* #,##0.00\\ _€_-;\\-* #,##0.00\\ _€_-;_-* "-"??\\ _€_-;_-@_-'
+                            new_cell.style = "Comma"
+                        except Exception as e:
                             new_cell.value = val
                             print(
-                                f"[DEBUG] Could not parse number '{val}' for column '{col}'"
+                                f"[DEBUG] Could not parse number '{val}' for column '{col}': {str(e)}"
                             )
                     else:
                         new_cell.value = val
