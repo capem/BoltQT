@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QSplitter,
     QApplication,
+    QFileDialog,
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -161,10 +162,33 @@ class ProcessingTab(QWidget):
 
         center_layout.addWidget(viewer_frame)
 
-        # Right panel (Queue)
+        # Right panel (File Info and Queue)
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
+
+        # File Information section
+        info_frame, info_layout = self._create_section_frame("File Information")
+
+        # Create clickable label for file information
+        self.file_info_label = QLabel("No file loaded")
+        self.file_info_label.setStyleSheet("""
+            QLabel {
+                padding: 5px;
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+            }
+            QLabel:hover {
+                background-color: #e9ecef;
+                border-color: #ced4da;
+            }
+        """)
+        self.file_info_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.file_info_label.mousePressEvent = lambda e: self._select_pdf_file()
+        info_layout.addWidget(self.file_info_label)
+
+        right_layout.addWidget(info_frame)
 
         # Queue section
         queue_frame, queue_layout = self._create_section_frame("Processing Queue")
@@ -457,6 +481,65 @@ class ProcessingTab(QWidget):
         # Load next file
         self._load_next_pdf()
 
+    def _select_pdf_file(self) -> None:
+        """Handle manual PDF file selection."""
+        try:
+            config = self.config_manager.get_config()
+            source_folder = config.get("source_folder", "")
+
+            if not source_folder:
+                self._handle_error(
+                    ValueError("Source folder not configured"), "selecting PDF file"
+                )
+                return
+
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Select PDF File", source_folder, "PDF Files (*.pdf)"
+            )
+
+            if file_path:
+                # Close current PDF
+                if self.current_pdf:
+                    self.pdf_viewer.clear_pdf()
+                    self.current_pdf = None
+                    self.current_pdf_start_time = None
+
+                # Load the selected PDF
+                self.current_pdf = file_path
+                self.current_pdf_start_time = datetime.now()
+                self.pdf_viewer.display_pdf(file_path)
+
+                # Update file info label
+                self._update_file_info_label(file_path)
+
+                # Refresh Excel data
+                excel_file = config.get("excel_file")
+                excel_sheet = config.get("excel_sheet")
+                if excel_file and excel_sheet:
+                    self.excel_manager.load_excel_data(excel_file, excel_sheet)
+
+                # Clear and update filters
+                for frame in self.filter_frames:
+                    frame["fuzzy"].clear()
+                self._load_filter_values()
+
+                # Focus first filter
+                if self.filter_frames:
+                    self.filter_frames[0]["fuzzy"].entry.setFocus()
+
+                self._update_status("Ready")
+                self._update_process_button()
+
+        except Exception as e:
+            self._handle_error(e, "selecting PDF file")
+
+    def _update_file_info_label(self, file_path: Optional[str] = None) -> None:
+        """Update the file information label with the current or specified file."""
+        if file_path:
+            self.file_info_label.setText(f"File: {os.path.basename(file_path)}")
+        else:
+            self.file_info_label.setText("No file loaded")
+
     def _load_next_pdf(self, skip: bool = False) -> None:
         """Load the next PDF file with improved file handle management."""
         try:
@@ -494,9 +577,10 @@ class ProcessingTab(QWidget):
                                 continue
                             raise
 
-                    # Reset state variables
+                    # Reset state variables and update UI
                     self.current_pdf = None
                     self.current_pdf_start_time = None
+                    self._update_file_info_label()
 
                 except Exception as cleanup_error:
                     print(
@@ -542,6 +626,9 @@ class ProcessingTab(QWidget):
                 print(f"[DEBUG] Loading next PDF: {next_pdf}")
                 self.current_pdf = next_pdf
                 self.current_pdf_start_time = datetime.now()
+
+                # Update file info label
+                self._update_file_info_label(next_pdf)
 
                 # Display PDF with retries built into the display_pdf method
                 self.pdf_viewer.display_pdf(next_pdf, retry_count=3)
