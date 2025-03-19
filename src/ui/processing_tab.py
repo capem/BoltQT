@@ -108,9 +108,9 @@ class ProcessingTab(QWidget):
         layout.addWidget(splitter)
 
         # Left panel (Filters and Actions)
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
 
         # Filters section
         filters_frame, filters_layout = self._create_section_frame("Filters")
@@ -119,7 +119,7 @@ class ProcessingTab(QWidget):
         self.filters_layout = QVBoxLayout(self.filters_container)
         filters_layout.addWidget(self.filters_container)
 
-        left_layout.addWidget(filters_frame)
+        right_layout.addWidget(filters_frame)
 
         # Actions section
         actions_frame, actions_layout = self._create_section_frame("Actions")
@@ -145,8 +145,8 @@ class ProcessingTab(QWidget):
         self.skip_button.clicked.connect(lambda: self._load_next_pdf(skip=True))
         actions_layout.addWidget(self.skip_button)
 
-        left_layout.addWidget(actions_frame)
-        left_layout.addStretch()
+        right_layout.addWidget(actions_frame)
+        right_layout.addStretch()
 
         # Center panel (PDF Viewer)
         center_panel = QWidget()
@@ -163,9 +163,9 @@ class ProcessingTab(QWidget):
         center_layout.addWidget(viewer_frame)
 
         # Right panel (File Info and Queue)
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
 
         # File Information section
         info_frame, info_layout = self._create_section_frame("File Information")
@@ -188,7 +188,7 @@ class ProcessingTab(QWidget):
         self.file_info_label.mousePressEvent = lambda e: self._select_pdf_file()
         info_layout.addWidget(self.file_info_label)
 
-        right_layout.addWidget(info_frame)
+        left_layout.addWidget(info_frame)
 
         # Queue section
         queue_frame, queue_layout = self._create_section_frame("Processing Queue")
@@ -199,7 +199,7 @@ class ProcessingTab(QWidget):
         self.queue_display.retry_button.clicked.connect(self._retry_failed)
         queue_layout.addWidget(self.queue_display)
 
-        right_layout.addWidget(queue_frame)
+        left_layout.addWidget(queue_frame)
 
         # Add panels to splitter
         splitter.addWidget(left_panel)
