@@ -97,8 +97,8 @@ class MainWindow(QMainWindow):
         # Add tabs
         self.loading_screen.set_progress(85, "Finalizing UI setup...")
         self.app.processEvents()  # Process events to update UI
-        self.tab_widget.addTab(self.config_tab, "Configuration")
         self.tab_widget.addTab(self.processing_tab, "Processing")
+        self.tab_widget.addTab(self.config_tab, "Configuration")
 
         # Hide loading screen after a short delay
         self.loading_screen.set_progress(100, "Ready!")
