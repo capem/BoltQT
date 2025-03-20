@@ -361,7 +361,7 @@ class ProcessingTab(QWidget):
 
             # Track row_idx from filter2 if we have it
             row_idx = -1
-            
+
             # Apply filters for all previous filters
             filtered_df = df.copy()
             for i in range(filter_index):
@@ -372,15 +372,21 @@ class ProcessingTab(QWidget):
 
                 # If this is filter2, parse it to get the clean value and row_idx
                 if i == 1:
-                    clean_value, parsed_row_idx = self._parse_filter2_value(selected_value)
+                    clean_value, parsed_row_idx = self._parse_filter2_value(
+                        selected_value
+                    )
                     selected_value = clean_value
                     row_idx = parsed_row_idx
-                    print(f"[DEBUG] Parsed filter2: value='{clean_value}', row_idx={row_idx}")
+                    print(
+                        f"[DEBUG] Parsed filter2: value='{clean_value}', row_idx={row_idx}"
+                    )
                 # For filter3 and beyond, check row_idx
                 if i > 1:
                     # Clear and return if no valid row_idx from filter2
                     if row_idx < 0 or row_idx not in filtered_df.index:
-                        print(f"[DEBUG] No valid row_idx for filter {i+1}, clearing all subsequent filters")
+                        print(
+                            f"[DEBUG] No valid row_idx for filter {i + 1}, clearing all subsequent filters"
+                        )
                         for idx in range(i, len(self.filter_frames)):
                             self.filter_frames[idx]["fuzzy"].clear()
                         return
@@ -425,24 +431,96 @@ class ProcessingTab(QWidget):
                 if filter_index > 1:
                     filter2_value = self.filter_frames[1]["fuzzy"].get()
                     if not filter2_value:
-                        print("[DEBUG] No filter2 value selected, keeping subsequent filters empty")
+                        print(
+                            "[DEBUG] No filter2 value selected, keeping subsequent filters empty"
+                        )
                         return
-                    
+
                     _, row_idx = self._parse_filter2_value(filter2_value)
                     if row_idx < 0 or row_idx not in filtered_df.index:
-                        print(f"[DEBUG] No valid row_idx from filter2, keeping filter {filter_index + 1} empty")
+                        print(
+                            f"[DEBUG] No valid row_idx from filter2, keeping filter {filter_index + 1} empty"
+                        )
                         return
-                    
+
                     # Use only the specific row for valid row_idx
                     filtered_df = filtered_df.loc[[row_idx]]
-                    print(f"[DEBUG] Using row_idx {row_idx} for filter {filter_index + 1}")
+                    print(
+                        f"[DEBUG] Using row_idx {row_idx} for filter {filter_index + 1}"
+                    )
 
                 # Get unique values from filtered data
                 values = sorted(filtered_df[column].astype(str).unique().tolist())
 
             # Update the fuzzy search values
             values = [str(x).strip() for x in values]
-            self.filter_frames[filter_index]["fuzzy"].set_values(values)
+
+            # Format date values to dd/mm/yyyy format only if the column name contains "DATE"
+            column_name = self.filter_frames[filter_index]["column"]
+            print(
+                f"[DEBUG] Column name check: '{column_name}', contains 'DATE': {'DATE' in column_name.upper()}"
+            )
+
+            if "DATE" in column_name.upper():
+                print(f"[DEBUG] Formatting dates for column: {column_name}")
+                formatted_values = []
+                for value in values:
+                    original_value = value
+                    try:
+                        # Check if the value could be parsed as a date
+                        if "/" in value or "-" in value or "." in value:
+                            formatted = False
+                            # Try different date formats
+                            for fmt in [
+                                "%Y-%m-%d %H:%M:%S",  # For datetime with seconds: 2023-09-20 00:00:00
+                                "%Y-%m-%d %H:%M",  # For datetime without seconds
+                                "%Y/%m/%d %H:%M:%S",  # Other separators with time
+                                "%Y/%m/%d %H:%M",
+                                "%Y-%m-%d",  # Standard date formats
+                                "%Y/%m/%d",
+                                "%Y.%m.%d",
+                                "%m/%d/%Y",
+                                "%m-%d-%Y",
+                                "%m.%d.%Y",
+                                "%d/%m/%Y",
+                                "%d-%m-%Y",
+                                "%d.%m.%Y",
+                            ]:
+                                try:
+                                    date_obj = datetime.strptime(value, fmt)
+                                    # Format to dd/mm/yyyy
+                                    new_value = date_obj.strftime("%d/%m/%Y")
+                                    print(
+                                        f"[DEBUG] Date converted: '{value}' using format '{fmt}' -> '{new_value}'"
+                                    )
+                                    value = new_value
+                                    formatted = True
+                                    break
+                                except ValueError:
+                                    continue
+
+                            if not formatted:
+                                print(f"[DEBUG] Could not parse date: '{value}'")
+                    except Exception as e:
+                        print(f"[DEBUG] Error parsing date '{value}': {str(e)}")
+                        # If any error occurs during date parsing, keep the original value
+                        pass
+
+                    if original_value != value:
+                        print(
+                            f"[DEBUG] Date formatting changed: '{original_value}' -> '{value}'"
+                        )
+
+                    formatted_values.append(value)
+
+                print(f"[DEBUG] Setting {len(formatted_values)} formatted date values")
+                self.filter_frames[filter_index]["fuzzy"].set_values(formatted_values)
+            else:
+                # For non-date columns, use values as is
+                print(
+                    f"[DEBUG] Using {len(values)} unformatted values for non-date column: {column_name}"
+                )
+                self.filter_frames[filter_index]["fuzzy"].set_values(values)
 
         except Exception as e:
             self._handle_error(
@@ -836,13 +914,13 @@ class ProcessingTab(QWidget):
         msg_box.setWindowTitle("Warning")
         msg_box.setText(message)
         msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-        
+
         # Make it non-modal
         msg_box.setWindowModality(Qt.WindowModality.NonModal)
-        
+
         # Show the message box
         msg_box.show()
-        
+
         # Update status bar
         self._update_status(f"Warning: {message.split('\n')[0]}")
 
@@ -850,29 +928,29 @@ class ProcessingTab(QWidget):
         """Handle errors in a way appropriate to their severity."""
         # Log the error
         print(f"[DEBUG] Error {context}: {str(error)}")
-        
+
         # Determine if this is a critical error that should show a blocking dialog
         is_critical = True
-        
+
         # Non-critical errors:
         # 1. Excel file access errors
         if isinstance(error, OSError) and "excel" in context.lower():
             is_critical = False
             self._show_warning(f"Error {context}:\n{str(error)}")
-        
+
         # 2. PDF loading errors
         elif "pdf" in context.lower() and "load" in context.lower():
             is_critical = False
             self._show_warning(f"Error {context}:\n{str(error)}")
-            
+
         # 3. Excel data loading errors
         elif "excel" in context.lower() and "load" in context.lower():
             is_critical = False
             self._show_warning(f"Error {context}:\n{str(error)}")
-            
+
         # For critical errors, use the error handler
         if is_critical:
             self._error_handler(error, context)
-        
+
         # Always update the status bar
         self._update_status(f"Error: {context}")
