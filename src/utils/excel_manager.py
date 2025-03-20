@@ -55,10 +55,32 @@ class ExcelManager(QObject):
 
             print(f"[DEBUG] Loading Excel data from {file_path}, sheet: {sheet_name}")
 
+            # Try to normalize path for network paths
+            normalized_path = file_path
+            # Handle Windows UNC paths
+            if file_path.startswith('//') or file_path.startswith('\\\\'):
+                try:
+                    # Make sure the path is in a consistent format
+                    parts = file_path.replace('/', '\\').strip('\\').split('\\')
+                    if len(parts) >= 2:
+                        normalized_path = f"\\\\{parts[0]}\\{parts[1]}"
+                        if len(parts) > 2:
+                            normalized_path += '\\' + '\\'.join(parts[2:])
+                    print(f"[DEBUG] Normalized network path: {normalized_path}")
+                except Exception as path_err:
+                    print(f"[DEBUG] Path normalization error: {str(path_err)}")
+
             # Load the data
-            self.excel_data = pd.read_excel(
-                file_path, sheet_name=sheet_name, engine="openpyxl"
-            )
+            try:
+                self.excel_data = pd.read_excel(
+                    normalized_path, sheet_name=sheet_name, engine="openpyxl"
+                )
+            except OSError:
+                print(f"[DEBUG] Failed to read with normalized path, trying original path")
+                # If normalized path fails, try the original path
+                self.excel_data = pd.read_excel(
+                    file_path, sheet_name=sheet_name, engine="openpyxl"
+                )
 
             # Update last loaded file info
             self._last_file = file_path
@@ -93,9 +115,42 @@ class ExcelManager(QObject):
 
             print(f"[DEBUG] Caching hyperlinks for column: {column_name}")
 
-            # Load workbook
-            wb = load_workbook(file_path, data_only=True)
-            ws = wb[sheet_name]
+            # Try to normalize path for network paths
+            normalized_path = file_path
+            # Handle Windows UNC paths
+            if file_path.startswith('//') or file_path.startswith('\\\\'):
+                try:
+                    # Make sure the path is in a consistent format
+                    parts = file_path.replace('/', '\\').strip('\\').split('\\')
+                    if len(parts) >= 2:
+                        normalized_path = f"\\\\{parts[0]}\\{parts[1]}"
+                        if len(parts) > 2:
+                            normalized_path += '\\' + '\\'.join(parts[2:])
+                    print(f"[DEBUG] Normalized network path: {normalized_path}")
+                except Exception as path_err:
+                    print(f"[DEBUG] Path normalization error: {str(path_err)}")
+            
+            try:
+                # Load workbook
+                wb = load_workbook(normalized_path, data_only=True)
+            except:
+                print(f"[DEBUG] Failed to load workbook with normalized path, trying original path")
+                try:
+                    wb = load_workbook(file_path, data_only=True)
+                except Exception as wb_err:
+                    print(f"[DEBUG] Could not load workbook: {str(wb_err)}")
+                    # If we can't load the workbook, just return without error
+                    self._hyperlink_cache.clear()
+                    return
+                
+            try:
+                ws = wb[sheet_name]
+            except KeyError as key_err:
+                print(f"[DEBUG] Sheet '{sheet_name}' not found: {str(key_err)}")
+                return
+            except Exception as sheet_err:
+                print(f"[DEBUG] Error accessing sheet: {str(sheet_err)}")
+                return
 
             # Find the column index
             header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
@@ -109,8 +164,12 @@ class ExcelManager(QObject):
 
             # Cache hyperlinks
             for row_idx in range(2, ws.max_row + 1):  # Skip header row
-                cell = ws.cell(row=row_idx, column=col_idx)
-                self._hyperlink_cache[row_idx - 2] = cell.hyperlink is not None
+                try:
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    self._hyperlink_cache[row_idx - 2] = cell.hyperlink is not None
+                except Exception as cell_err:
+                    print(f"[DEBUG] Error reading cell at row {row_idx}: {str(cell_err)}")
+                    # Continue with next cell instead of aborting
 
             self._last_cached_key = cache_key
 
@@ -118,7 +177,7 @@ class ExcelManager(QObject):
             print(f"[DEBUG] Error caching hyperlinks: {str(e)}")
             self._hyperlink_cache.clear()
             self._last_cached_key = None
-            raise
+            # Don't raise, just silently fail
 
     def has_hyperlink(self, row_idx: int) -> bool:
         """Check if a specific row has a hyperlink."""

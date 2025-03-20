@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QScrollArea,
     QFrame,
+    QMessageBox,
 )
 from PyQt6.QtCore import Qt
 import json
@@ -34,7 +35,7 @@ class ConfigTab(QWidget):
 
         self.config_manager = config_manager
         self.excel_manager = excel_manager
-        self._handle_error = error_handler
+        self._error_handler = error_handler
         self._update_status = status_handler
 
         # Create main layout
@@ -585,3 +586,47 @@ class ConfigTab(QWidget):
                     self._update_status(f"Loaded preset: {preset_name}")
         except Exception as e:
             self._handle_error(e, "loading preset")
+
+    def _show_warning(self, message: str) -> None:
+        """Show a non-blocking warning to the user."""
+        # Create message box with warning icon
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+        msg_box.setWindowTitle("Warning")
+        msg_box.setText(message)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        
+        # Make it non-modal
+        msg_box.setWindowModality(Qt.WindowModality.NonModal)
+        
+        # Show the message box
+        msg_box.show()
+        
+        # Update status bar
+        self._update_status(f"Warning: {message.split('\n')[0]}")
+        
+    def _handle_error(self, error: Exception, context: str) -> None:
+        """Handle errors based on their severity."""
+        # Log the error
+        print(f"[DEBUG] Error {context}: {str(error)}")
+        
+        # Determine if this is a critical error that should show a blocking dialog
+        is_critical = True
+        
+        # Non-critical errors:
+        # 1. Excel file access errors
+        if isinstance(error, OSError) and "excel" in context.lower():
+            is_critical = False
+            self._show_warning(f"Error {context}:\n{str(error)}")
+        
+        # 2. Loading sheet or columns errors
+        elif "load" in context.lower() and ("sheet" in context.lower() or "column" in context.lower()):
+            is_critical = False
+            self._show_warning(f"Error {context}:\n{str(error)}")
+            
+        # For critical errors, use the error handler
+        if is_critical:
+            self._error_handler(error, context)
+        
+        # Always update the status bar
+        self._update_status(f"Error: {context}")

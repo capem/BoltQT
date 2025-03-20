@@ -71,7 +71,19 @@ class MainWindow(QMainWindow):
         # Error and status handlers
         def handle_error(error: Exception, context: str) -> None:
             from src.ui.error_dialog import show_error
-
+            
+            # Log the error regardless
+            print(f"ERROR: {context}: {str(error)}")
+            
+            # For certain errors like OSError accessing network files,
+            # we want to avoid blocking the application
+            if isinstance(error, OSError) and ("//192.168.0.77" in str(error) or 
+                                               "\\\\192.168.0.77" in str(error)):
+                # Update status bar without showing dialog
+                self.status_bar.showMessage(f"Error accessing network file: {str(error)}")
+                return
+                
+            # For other errors, show the error dialog
             show_error(self, context, error)
 
         def handle_status(message: str) -> None:

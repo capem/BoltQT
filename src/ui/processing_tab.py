@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QApplication,
     QFileDialog,
+    QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -48,7 +49,7 @@ class ProcessingTab(QWidget):
         self.config_manager = config_manager
         self.excel_manager = excel_manager
         self.pdf_manager = pdf_manager
-        self._handle_error = error_handler
+        self._error_handler = error_handler
         self._update_status = status_handler
 
         # Initialize state
@@ -322,9 +323,34 @@ class ProcessingTab(QWidget):
 
             # Load Excel data if needed
             if self.excel_manager.excel_data is None:
-                self.excel_manager.load_excel_data(
-                    config["excel_file"], config["excel_sheet"]
-                )
+                try:
+                    self.excel_manager.load_excel_data(
+                        config["excel_file"], config["excel_sheet"]
+                    )
+                except OSError as e:
+                    # Handle file access error gracefully
+                    print(f"[DEBUG] Excel file access error: {str(e)}")
+                    self._show_warning(
+                        f"Could not access Excel file: {config['excel_file']}\n"
+                        f"Error: {str(e)}\n\n"
+                        f"Filters will not be populated."
+                    )
+                    # Set empty values for all filters
+                    for i in range(len(self.filter_frames)):
+                        self.filter_frames[i]["fuzzy"].set_values([])
+                    return
+                except Exception as e:
+                    # Handle other Excel loading errors
+                    print(f"[DEBUG] Excel loading error: {str(e)}")
+                    self._show_warning(
+                        f"Error loading Excel data from {config['excel_file']}:\n"
+                        f"{str(e)}\n\n"
+                        f"Filters will not be populated."
+                    )
+                    # Set empty values for all filters
+                    for i in range(len(self.filter_frames)):
+                        self.filter_frames[i]["fuzzy"].set_values([])
+                    return
 
             # If we have no filters, exit
             if not self.filter_frames or filter_index >= len(self.filter_frames):
@@ -801,3 +827,52 @@ class ProcessingTab(QWidget):
         """Handle tab closure."""
         self.processing_thread.stop()
         super().closeEvent(event)
+
+    def _show_warning(self, message: str) -> None:
+        """Show a non-blocking warning to the user."""
+        # Create message box with warning icon
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+        msg_box.setWindowTitle("Warning")
+        msg_box.setText(message)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        
+        # Make it non-modal
+        msg_box.setWindowModality(Qt.WindowModality.NonModal)
+        
+        # Show the message box
+        msg_box.show()
+        
+        # Update status bar
+        self._update_status(f"Warning: {message.split('\n')[0]}")
+
+    def _handle_error(self, error: Exception, context: str) -> None:
+        """Handle errors in a way appropriate to their severity."""
+        # Log the error
+        print(f"[DEBUG] Error {context}: {str(error)}")
+        
+        # Determine if this is a critical error that should show a blocking dialog
+        is_critical = True
+        
+        # Non-critical errors:
+        # 1. Excel file access errors
+        if isinstance(error, OSError) and "excel" in context.lower():
+            is_critical = False
+            self._show_warning(f"Error {context}:\n{str(error)}")
+        
+        # 2. PDF loading errors
+        elif "pdf" in context.lower() and "load" in context.lower():
+            is_critical = False
+            self._show_warning(f"Error {context}:\n{str(error)}")
+            
+        # 3. Excel data loading errors
+        elif "excel" in context.lower() and "load" in context.lower():
+            is_critical = False
+            self._show_warning(f"Error {context}:\n{str(error)}")
+            
+        # For critical errors, use the error handler
+        if is_critical:
+            self._error_handler(error, context)
+        
+        # Always update the status bar
+        self._update_status(f"Error: {context}")
