@@ -16,7 +16,7 @@ class FuzzySearchFrame(QWidget):
 
     # Signals
     value_selected = pyqtSignal()  # Emitted when a value is selected
-    text_changed = pyqtSignal()    # Emitted when the text input changes
+    text_changed = pyqtSignal()  # Emitted when the text input changes
 
     def __init__(
         self,
@@ -50,7 +50,7 @@ class FuzzySearchFrame(QWidget):
         """Create and configure all child widgets."""
         layout = QVBoxLayout()
         layout.setContentsMargins(1, 1, 1, 1)  # Reduce margins further
-        layout.setSpacing(1)  # Reduce spacing
+        layout.setSpacing(2)  # Slightly increased spacing for better readability
         self.setLayout(layout)
 
         # Entry widget with placeholder
@@ -73,31 +73,38 @@ class FuzzySearchFrame(QWidget):
         """Configure styles for the widgets."""
         self.entry.setStyleSheet("""
             QLineEdit {
-                padding: 3px;
-                border: 1px solid #ccc;
-                border-radius: 3px;
-                font-family: 'Segoe UI';
+                padding: 5px 8px;
+                border: 1px solid #d1d1d1;
+                border-radius: 4px;
+                background-color: white;
+                font-family: system-ui;
                 font-size: 10pt;
+            }
+            QLineEdit:focus {
+                border: 1px solid #007aff;
             }
         """)
 
         self.listbox.setStyleSheet("""
             QListWidget {
-                border: 1px solid #ccc;
-                border-radius: 3px;
-                background: white;
-                font-family: 'Segoe UI';
+                border: 1px solid #d1d1d1;
+                border-radius: 4px;
+                background-color: white;
+                font-family: system-ui;
                 font-size: 10pt;
+                outline: none;
             }
             QListWidget::item {
-                padding: 3px;
+                padding: 4px 8px;
+                border-bottom: 1px solid #f0f0f0;
             }
             QListWidget::item:selected {
-                background: #007bff;
-                color: white;
+                background-color: #e6f2ff;
+                color: #000000;
+                border-left: 2px solid #007aff;
             }
-            QListWidget::item:hover {
-                background: #e6f3ff;
+            QListWidget::item:hover:!selected {
+                background-color: #f5f5f5;
             }
         """)
 
@@ -105,7 +112,9 @@ class FuzzySearchFrame(QWidget):
         """Bind event handlers to widgets."""
         # Entry events
         self.entry.textChanged.connect(self._on_text_changed)
-        self.entry.textChanged.connect(lambda: self.text_changed.emit())  # Emit text_changed signal
+        self.entry.textChanged.connect(
+            lambda: self.text_changed.emit()
+        )  # Emit text_changed signal
         self.entry.returnPressed.connect(self._select_top_match)
 
         # Listbox events
@@ -244,6 +253,23 @@ class FuzzySearchFrame(QWidget):
             return
 
         menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: white;
+                border: 1px solid #d1d1d1;
+                border-radius: 4px;
+                padding: 4px 0px;
+            }
+            QMenu::item {
+                padding: 4px 24px;
+                font-family: system-ui;
+                font-size: 10pt;
+            }
+            QMenu::item:selected {
+                background-color: #e6f2ff;
+                color: #000000;
+            }
+        """)
         menu.addAction("Open Linked File", lambda: self._open_linked_file(value))
         menu.exec(self.listbox.mapToGlobal(pos))
 

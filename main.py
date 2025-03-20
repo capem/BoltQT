@@ -5,7 +5,6 @@ import sys
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
-    QTabWidget,
     QStatusBar,
     QWidget,
     QVBoxLayout,
@@ -16,6 +15,8 @@ from PyQt6.QtCore import QTimer
 from src.ui.config_tab import ConfigTab
 from src.ui.processing_tab import ProcessingTab
 from src.ui.loading_screen import EnhancedLoadingScreen
+from src.ui.mac_style import apply_mac_style
+from src.ui.mac_tab_widget import MacTabWidget
 from src.utils.config_manager import ConfigManager
 from src.utils.excel_manager import ExcelManager
 from src.utils.pdf_manager import PDFManager
@@ -59,8 +60,8 @@ class MainWindow(QMainWindow):
         self.layout = QVBoxLayout(self.central_widget)
         self.layout.setContentsMargins(0, 0, 0, 0)
 
-        # Create tab widget
-        self.tab_widget = QTabWidget()
+        # Create tab widget using MacTabWidget
+        self.tab_widget = MacTabWidget()
         self.layout.addWidget(self.tab_widget)
 
         # Create status bar
@@ -71,18 +72,21 @@ class MainWindow(QMainWindow):
         # Error and status handlers
         def handle_error(error: Exception, context: str) -> None:
             from src.ui.error_dialog import show_error
-            
+
             # Log the error regardless
             print(f"ERROR: {context}: {str(error)}")
-            
+
             # For certain errors like OSError accessing network files,
             # we want to avoid blocking the application
-            if isinstance(error, OSError) and ("//192.168.0.77" in str(error) or 
-                                               "\\\\192.168.0.77" in str(error)):
+            if isinstance(error, OSError) and (
+                "//192.168.0.77" in str(error) or "\\\\192.168.0.77" in str(error)
+            ):
                 # Update status bar without showing dialog
-                self.status_bar.showMessage(f"Error accessing network file: {str(error)}")
+                self.status_bar.showMessage(
+                    f"Error accessing network file: {str(error)}"
+                )
                 return
-                
+
             # For other errors, show the error dialog
             show_error(self, context, error)
 
@@ -122,8 +126,8 @@ def main() -> int:
     # Create application first
     app = QApplication(sys.argv)
 
-    # Set application-wide style
-    app.setStyle("Fusion")
+    # Apply Mac-inspired styling
+    apply_mac_style(app)
 
     # Application name - define once for consistency
     app_name = "BoltQT"

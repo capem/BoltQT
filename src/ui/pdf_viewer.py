@@ -17,7 +17,7 @@ from PyQt6.QtGui import (
     QKeySequence,
     QAction,
 )
-from PyQt6.QtCore import Qt, QEvent, pyqtSignal, QRect
+from PyQt6.QtCore import Qt, QEvent, pyqtSignal, QRect, QSize
 from ..utils.pdf_manager import PDFManager
 
 
@@ -30,7 +30,7 @@ class PageWidget(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setStyleSheet(
-            "margin: 5px; background-color: white; border: 1px solid #ddd;"
+            "margin: 8px; background-color: white; border: 1px solid #e0e0e0; border-radius: 2px;"
         )
         # Remove minimum width constraint to let the PDF render at its natural size
         # self.setMinimumWidth(600)
@@ -42,15 +42,17 @@ class MultiPageWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
-        self.layout.setSpacing(20)  # Space between pages
-        self.layout.setContentsMargins(10, 10, 10, 10)
+        self.layout.setSpacing(
+            24
+        )  # Increase space between pages for better readability
+        self.layout.setContentsMargins(20, 20, 20, 20)  # More generous margins
         self.layout.setAlignment(
             Qt.AlignmentFlag.AlignHCenter
         )  # Center pages horizontally
         self.page_widgets: List[PageWidget] = []
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        # Set a gray background for the area around pages
-        self.setStyleSheet("background-color: #f0f0f0;")
+        # Set a light gray background for the area around pages
+        self.setStyleSheet("background-color: #f5f5f5;")
 
 
 class PDFViewer(QWidget):
@@ -219,21 +221,48 @@ class PDFViewer(QWidget):
         """)
 
     def _create_toolbar(self) -> QToolBar:
-        """Create toolbar with PDF viewing controls."""
-        toolbar = QToolBar("PDF Controls")
+        """Create a toolbar with navigation and zoom controls."""
+        toolbar = QToolBar()
         toolbar.setMovable(False)
-        toolbar.setFloatable(False)
+        toolbar.setIconSize(QSize(20, 20))
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background-color: #f9f9f9;
+                border-bottom: 1px solid #e0e0e0;
+                spacing: 5px;
+                padding: 2px;
+            }
+            
+            QToolButton {
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 4px;
+                margin: 2px;
+            }
+            
+            QToolButton:hover {
+                background-color: #f0f0f0;
+                border: 1px solid #e0e0e0;
+            }
+            
+            QToolButton:pressed {
+                background-color: #e0e0e0;
+            }
+            
+            QLabel {
+                margin: 0 10px;
+                color: #505050;
+            }
+        """)
 
         # Create a spacer widget for the left side
         left_spacer = QWidget()
-        left_spacer.setObjectName("spacerLeft")
         left_spacer.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
-        left_spacer.setStyleSheet("background: transparent; border: none;")
         toolbar.addWidget(left_spacer)
 
-        # Page indicator (Keep this for reference)
+        # Page indicator
         self.page_indicator = QLabel("0 / 0")
         self.page_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.page_indicator.setMinimumWidth(80)
@@ -243,13 +272,13 @@ class PDFViewer(QWidget):
 
         # Zoom controls
         self.zoom_out_btn = QToolButton()
-        self.zoom_out_btn.setText("Zoom -")
+        self.zoom_out_btn.setText("-")
         self.zoom_out_btn.setToolTip("Zoom Out")
         self.zoom_out_btn.clicked.connect(self.zoom_out)
         toolbar.addWidget(self.zoom_out_btn)
 
         self.zoom_in_btn = QToolButton()
-        self.zoom_in_btn.setText("Zoom +")
+        self.zoom_in_btn.setText("+")
         self.zoom_in_btn.setToolTip("Zoom In")
         self.zoom_in_btn.clicked.connect(self.zoom_in)
         toolbar.addWidget(self.zoom_in_btn)
@@ -258,13 +287,13 @@ class PDFViewer(QWidget):
 
         # Rotation controls
         self.rotate_left_btn = QToolButton()
-        self.rotate_left_btn.setText("Rotate ↺")
+        self.rotate_left_btn.setText("↺")
         self.rotate_left_btn.setToolTip("Rotate Left")
         self.rotate_left_btn.clicked.connect(self.rotate_left)
         toolbar.addWidget(self.rotate_left_btn)
 
         self.rotate_right_btn = QToolButton()
-        self.rotate_right_btn.setText("Rotate ↻")
+        self.rotate_right_btn.setText("↻")
         self.rotate_right_btn.setToolTip("Rotate Right")
         self.rotate_right_btn.clicked.connect(self.rotate_right)
         toolbar.addWidget(self.rotate_right_btn)
@@ -286,11 +315,9 @@ class PDFViewer(QWidget):
 
         # Create a spacer widget for the right side
         right_spacer = QWidget()
-        right_spacer.setObjectName("spacerRight")
         right_spacer.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
-        right_spacer.setStyleSheet("background: transparent; border: none;")
         toolbar.addWidget(right_spacer)
 
         return toolbar

@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
     QMessageBox,
+    QHBoxLayout,
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -78,22 +79,53 @@ class ProcessingTab(QWidget):
     def _create_section_frame(self, title: str) -> tuple[QFrame, QVBoxLayout]:
         """Create a styled frame for a section."""
         frame = QFrame()
-        frame.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
+        frame.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Plain)
         frame.setStyleSheet("""
             QFrame {
                 background-color: white;
-                border: 1px solid #ccc;
-                border-radius: 5px;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
             }
         """)
 
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(6, 10, 6, 10)  # Reduced horizontal margins
+        layout.setContentsMargins(16, 20, 16, 20)
+        layout.setSpacing(12)
 
         if title:
+            # Create header layout to contain the title
+            header_layout = QHBoxLayout()
+            header_layout.setContentsMargins(0, 0, 0, 8)  # Bottom margin for spacing
+
+            # Create section title label with Mac-style font
             label = QLabel(title)
-            label.setStyleSheet("font-weight: bold; font-size: 12pt;")
-            layout.addWidget(label)
+            label.setProperty("heading", "true")  # Used for styling in stylesheet
+            label.setStyleSheet("""
+                font-family: system-ui;
+                font-weight: 600; 
+                font-size: 14pt; 
+                color: #000000;
+                margin-bottom: 5px;
+                background: transparent;
+                border: none;
+            """)
+            header_layout.addWidget(label)
+
+            # Add stretch to push the label to the left
+            header_layout.addStretch()
+
+            # Add the header to the main layout
+            layout.addLayout(header_layout)
+
+            # Add a subtle separator line below the title (optional)
+            separator = QFrame()
+            separator.setFrameShape(QFrame.Shape.HLine)
+            separator.setFrameShadow(QFrame.Shadow.Plain)
+            separator.setStyleSheet("background-color: #e0e0e0; max-height: 1px;")
+            layout.addWidget(separator)
+
+            # Add a small space after the separator
+            layout.addSpacing(8)
 
         return frame, layout
 
@@ -101,17 +133,20 @@ class ProcessingTab(QWidget):
         """Setup the user interface."""
         # Create main layout
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
 
         # Create splitter for main panels
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(1)  # Thin handle for subtle appearance
+        splitter.setChildrenCollapsible(False)  # Don't allow panels to collapse
         layout.addWidget(splitter)
 
         # Left panel (Filters and Actions)
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(16)
 
         # Filters section
         filters_frame, filters_layout = self._create_section_frame("Filters")
@@ -119,13 +154,14 @@ class ProcessingTab(QWidget):
         self.filters_container = QWidget()
         self.filters_layout = QVBoxLayout(self.filters_container)
         self.filters_layout.setContentsMargins(0, 0, 0, 0)  # Remove container margins
-        self.filters_layout.setSpacing(5)  # Reduce spacing between filters
+        self.filters_layout.setSpacing(8)  # Reduce spacing between filters
         filters_layout.addWidget(self.filters_container)
 
         right_layout.addWidget(filters_frame)
 
         # Actions section
         actions_frame, actions_layout = self._create_section_frame("Actions")
+        actions_layout.setSpacing(12)  # Consistent spacing
 
         # Process button
         self.process_button = QPushButton("Process File")
@@ -136,9 +172,17 @@ class ProcessingTab(QWidget):
         self.process_button.setAutoDefault(True)
         # Add focus style
         self.process_button.setStyleSheet("""
-            QPushButton:focus {
-                background-color: #cce4ff;
-                border: 2px solid #007bff;
+            QPushButton {
+                min-height: 30px;
+                font-weight: 500;
+            }
+            QPushButton:default {
+                background-color: #007aff;
+                color: white;
+                border: 1px solid #0062cc;
+            }
+            QPushButton:default:hover {
+                background-color: #0069d9;
             }
         """)
         actions_layout.addWidget(self.process_button)
@@ -146,6 +190,7 @@ class ProcessingTab(QWidget):
         # Skip button
         self.skip_button = QPushButton("Skip File")
         self.skip_button.clicked.connect(lambda: self._load_next_pdf(skip=True))
+        self.skip_button.setStyleSheet("min-height: 30px;")
         actions_layout.addWidget(self.skip_button)
 
         right_layout.addWidget(actions_frame)

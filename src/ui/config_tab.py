@@ -79,18 +79,49 @@ class ConfigTab(QWidget):
         frame.setStyleSheet("""
             QFrame {
                 background-color: white;
-                border: 1px solid #ccc;
-                border-radius: 5px;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
             }
         """)
 
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
 
         if title:
+            # Create header layout to contain the title
+            header_layout = QHBoxLayout()
+            header_layout.setContentsMargins(0, 0, 0, 8)  # Bottom margin for spacing
+
+            # Create section title label with Mac-style font
             label = QLabel(title)
-            label.setStyleSheet("font-weight: bold; font-size: 12pt;")
-            layout.addWidget(label)
+            label.setProperty("heading", "true")  # Used for styling in stylesheet
+            label.setStyleSheet("""
+                font-family: system-ui;
+                font-weight: 600; 
+                font-size: 14pt; 
+                color: #000000;
+                margin-bottom: 5px;
+                background: transparent;
+                border: none;
+            """)
+            header_layout.addWidget(label)
+
+            # Add stretch to push the label to the left
+            header_layout.addStretch()
+
+            # Add the header to the main layout
+            layout.addLayout(header_layout)
+
+            # Add a subtle separator line below the title (optional)
+            separator = QFrame()
+            separator.setFrameShape(QFrame.Shape.HLine)
+            separator.setFrameShadow(QFrame.Shadow.Plain)
+            separator.setStyleSheet("background-color: #e0e0e0; max-height: 1px;")
+            layout.addWidget(separator)
+
+            # Add a small space after the separator
+            layout.addSpacing(8)
 
         return frame, layout
 
@@ -595,38 +626,40 @@ class ConfigTab(QWidget):
         msg_box.setWindowTitle("Warning")
         msg_box.setText(message)
         msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-        
+
         # Make it non-modal
         msg_box.setWindowModality(Qt.WindowModality.NonModal)
-        
+
         # Show the message box
         msg_box.show()
-        
+
         # Update status bar
         self._update_status(f"Warning: {message.split('\n')[0]}")
-        
+
     def _handle_error(self, error: Exception, context: str) -> None:
         """Handle errors based on their severity."""
         # Log the error
         print(f"[DEBUG] Error {context}: {str(error)}")
-        
+
         # Determine if this is a critical error that should show a blocking dialog
         is_critical = True
-        
+
         # Non-critical errors:
         # 1. Excel file access errors
         if isinstance(error, OSError) and "excel" in context.lower():
             is_critical = False
             self._show_warning(f"Error {context}:\n{str(error)}")
-        
+
         # 2. Loading sheet or columns errors
-        elif "load" in context.lower() and ("sheet" in context.lower() or "column" in context.lower()):
+        elif "load" in context.lower() and (
+            "sheet" in context.lower() or "column" in context.lower()
+        ):
             is_critical = False
             self._show_warning(f"Error {context}:\n{str(error)}")
-            
+
         # For critical errors, use the error handler
         if is_critical:
             self._error_handler(error, context)
-        
+
         # Always update the status bar
         self._update_status(f"Error: {context}")

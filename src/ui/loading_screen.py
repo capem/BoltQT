@@ -56,18 +56,18 @@ class EnhancedLoadingScreen(QWidget):
     and optimized perceived performance.
     """
 
-    # Define color constants
-    COLOR_PRIMARY = QColor(52, 152, 219)  # Blue
-    COLOR_SECONDARY = QColor(46, 204, 113)  # Green
-    COLOR_TERTIARY = QColor(155, 89, 182)  # Purple
-    COLOR_BG_LIGHT = QColor(255, 255, 255, 240)
-    COLOR_BG_DARK = QColor(248, 248, 248, 240)
-    COLOR_SHADOW = QColor(0, 0, 0, 30)
-    COLOR_BORDER = QColor(220, 220, 220, 100)
-    COLOR_TRACK = QColor(220, 220, 220, 150)
-    COLOR_TEXT_TITLE = QColor(44, 62, 80)  # #2c3e50
-    COLOR_TEXT_PROGRESS = QColor(127, 140, 141)  # #7f8c8d
-    COLOR_BG_TRANSLUCENT = QColor(245, 245, 245, 200)
+    # Define color constants - Updated with Mac-inspired colors
+    COLOR_PRIMARY = QColor(0, 122, 255)  # Apple blue
+    COLOR_SECONDARY = QColor(88, 86, 214)  # Apple purple
+    COLOR_TERTIARY = QColor(52, 199, 89)  # Apple green
+    COLOR_BG_LIGHT = QColor(255, 255, 255, 245)
+    COLOR_BG_DARK = QColor(250, 250, 250, 245)
+    COLOR_SHADOW = QColor(0, 0, 0, 20)
+    COLOR_BORDER = QColor(229, 229, 234, 100)
+    COLOR_TRACK = QColor(229, 229, 234, 150)
+    COLOR_TEXT_TITLE = QColor(0, 0, 0)  # Black for title
+    COLOR_TEXT_PROGRESS = QColor(128, 128, 128)  # Gray for progress text
+    COLOR_BG_TRANSLUCENT = QColor(248, 248, 248, 220)
 
     # Animation constants - optimized intervals
     SPINNER_UPDATE_MS = 50  # Reduced update frequency (30ms -> 50ms)
@@ -107,10 +107,10 @@ class EnhancedLoadingScreen(QWidget):
         self._cached_bg_gradient = None
         self._cached_pulse_colors = {}
         self._cached_progress_gradient = None
-        
+
         # Initialize dimensions first
         self._calculate_dimensions()
-        
+
         # Cache fonts and metrics now that dimensions are calculated
         self._percentage_font = QFont()
         self._percentage_font.setPointSize(int(self.message_font_size * 0.8))
@@ -314,34 +314,48 @@ class EnhancedLoadingScreen(QWidget):
         logger.debug("paintEvent - end")
 
     def _draw_container(self, painter: QPainter) -> None:
-        """Draw the main container with shadow effect."""
-        # Cache container rect calculations
-        if self._container_rect is None:
-            self._container_rect = self.rect().adjusted(
-                self.padding_horizontal,
-                self.padding_vertical,
-                -self.padding_horizontal,
-                -self.padding_vertical,
-            )
-            self._shadow_rect = self._container_rect.adjusted(2, 2, 2, 2)
+        """Draw the container background with subtle shadow."""
+        # Get center point if not cached
+        if not self._center_point:
+            self._center_point = QPointF(self.width() / 2, self.height() / 2)
 
-        # Draw subtle shadow - simple and fast
+        # Calculate container rect if not cached
+        if not self._container_rect:
+            self._container_rect = QRect(
+                int(self._center_point.x() - self.container_width / 2),
+                int(self._center_point.y() - self.container_height / 2),
+                self.container_width,
+                self.container_height,
+            )
+
+        # Calculate shadow rect if not cached (slightly larger than container)
+        if not self._shadow_rect:
+            shadow_offset = 10
+            self._shadow_rect = QRect(
+                self._container_rect.x() - shadow_offset // 2,
+                self._container_rect.y() - shadow_offset // 2,
+                self._container_rect.width() + shadow_offset,
+                self._container_rect.height() + shadow_offset,
+            )
+
+        # Draw shadow
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self.COLOR_SHADOW)
-        painter.drawRoundedRect(self._shadow_rect, self.base_unit, self.base_unit)
+        painter.drawRoundedRect(self._shadow_rect, 10, 10)
 
-        # Cache and reuse gradient
-        if self._cached_bg_gradient is None:
-            self._cached_bg_gradient = QLinearGradient(
-                0, self._container_rect.top(), 0, self._container_rect.bottom()
-            )
+        # Draw container background
+        if not self._cached_bg_gradient:
+            # Convert QPoint to QPointF for the gradient
+            topLeft = QPointF(self._container_rect.topLeft())
+            bottomLeft = QPointF(self._container_rect.bottomLeft())
+
+            self._cached_bg_gradient = QLinearGradient(topLeft, bottomLeft)
             self._cached_bg_gradient.setColorAt(0, self.COLOR_BG_LIGHT)
             self._cached_bg_gradient.setColorAt(1, self.COLOR_BG_DARK)
 
-        # Draw container background
         painter.setBrush(self._cached_bg_gradient)
         painter.setPen(QPen(self.COLOR_BORDER, 1))
-        painter.drawRoundedRect(self._container_rect, self.base_unit, self.base_unit)
+        painter.drawRoundedRect(self._container_rect, 10, 10)
 
     def _draw_pulse_circle(self, painter: QPainter) -> None:
         """Draw the pulsing background circle for visual engagement."""
@@ -375,44 +389,52 @@ class EnhancedLoadingScreen(QWidget):
         painter.drawEllipse(center, self._pulse_radius, self._pulse_radius)
 
     def _draw_progress_bar(self, painter: QPainter) -> None:
-        """Draw the horizontal progress bar below the spinner."""
-        if self.progress <= 0:
-            return
+        """Draw a MacOS-style progress bar."""
+        bar_width = self.progress_bar_width
+        bar_height = self.progress_bar_height
+        bar_left = (self.width() - bar_width) / 2
+        bar_top = (
+            self._container_rect.bottom() - bar_height - 30
+        )  # Reduced space from bottom
 
-        # Use cached center point and calculate positions once
-        center = self._center_point
-        bar_top = int(center.y() + self.progress_ring_radius + self.element_spacing * 2)
-        bar_left = int(center.x() - (self.progress_bar_width / 2))
+        # Calculate the progress width
+        progress_width = int(bar_width * (self.progress / 100))
 
-        # Draw background track
-        track_rect = QRect(
-            bar_left, bar_top, self.progress_bar_width, self.progress_bar_height
-        )
+        # Draw bar background (track)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self.COLOR_TRACK)
         painter.drawRoundedRect(
-            track_rect, self.progress_bar_radius, self.progress_bar_radius
+            int(bar_left),
+            int(bar_top),
+            bar_width,
+            bar_height,
+            self.progress_bar_radius,
+            self.progress_bar_radius,
         )
 
-        # Draw progress fill if we have progress
-        if self.progress > 0:
-            fill_width = int(self.progress_bar_width * (self.progress / 100))
-
-            # Create or update cached gradient if needed
-            if self._cached_progress_gradient is None:
+        # Draw progress bar if there is progress
+        if progress_width > 0:
+            # Create gradient for progress bar if not cached
+            if not self._cached_progress_gradient:
                 self._cached_progress_gradient = QLinearGradient(
-                    0, 0, self.progress_bar_width, 0
+                    QPointF(bar_left, bar_top), QPointF(bar_left + bar_width, bar_top)
                 )
                 self._cached_progress_gradient.setColorAt(0, self.COLOR_PRIMARY)
                 self._cached_progress_gradient.setColorAt(1, self.COLOR_SECONDARY)
 
-            fill_rect = QRect(bar_left, bar_top, fill_width, self.progress_bar_height)
             painter.setBrush(self._cached_progress_gradient)
             painter.drawRoundedRect(
-                fill_rect, self.progress_bar_radius, self.progress_bar_radius
+                int(bar_left),
+                int(bar_top),
+                progress_width,
+                bar_height,
+                self.progress_bar_radius,
+                self.progress_bar_radius,
             )
 
-            self._draw_percentage_text(painter, float(bar_left), float(bar_top))
+        # Draw progress text with improved placement
+        if self.progress > 0 or self.progress_text:
+            self._draw_percentage_text(painter, bar_left, bar_top)
 
     def _draw_percentage_text(
         self, painter: QPainter, bar_left: float, bar_top: float
