@@ -228,9 +228,10 @@ class PDFManager(QObject):
             self._rotation = 0
 
             # Update viewer if connected
-            if self._viewer_ref and self._viewer_ref.pdf_view:
-                self._viewer_ref.pdf_document = self._current_doc
-                self._viewer_ref.pdf_view.setDocument(self._current_doc)
+            if self._viewer_ref:
+                # Just update the current document - PDFViewer no longer uses pdf_view
+                # and will handle rendering via PyMuPDF
+                pass
 
             return True
 
