@@ -486,9 +486,6 @@ class PDFViewer(QWidget):
                     self.doc = fitz.open(pdf_path)
                     self.total_pages = len(self.doc)
 
-                    # Also register with PDFManager
-                    self.pdf_manager.open_pdf(pdf_path)
-
                     # Update current PDF path
                     self.current_pdf = pdf_path
 

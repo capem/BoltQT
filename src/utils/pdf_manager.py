@@ -3,26 +3,20 @@ from typing import Dict, Any, Optional
 import os
 from tempfile import TemporaryDirectory
 import shutil
-from PyQt6.QtCore import QObject
-from PyQt6.QtPdf import QPdfDocument
 from .models import PDFTask
 from .template_manager import TemplateManager
 from datetime import datetime
 
 
-class PDFManager(QObject):
+class PDFManager:
     """Manages PDF file operations."""
 
     def __init__(self) -> None:
         """Initialize PDFManager."""
-        super().__init__()
-        self._current_doc: Optional[QPdfDocument] = None
         self._current_path: Optional[str] = None
-        self._rotation: int = 0
         self.template_manager = TemplateManager()
-        # Set to track processed and opened files
+        # Set to track processed files
         self._processed_files = set()
-        self._open_files = set()
         self._viewer_ref = None
 
     def _normalize_path(self, path: str) -> str:
@@ -208,73 +202,12 @@ class PDFManager(QObject):
             print(f"[DEBUG] Error getting next PDF: {str(e)}")
             return None
 
-    def open_pdf(self, pdf_path: str) -> bool:
-        """Open a PDF file for viewing/processing.
-
-        Args:
-            pdf_path: Path to the PDF file.
-
-        Returns:
-            bool: True if successful, False otherwise.
-        """
-        try:
-            # Close any open document
-            self.close_current_pdf()
-
-            # Create new document and load PDF
-            self._current_doc = QPdfDocument(self)
-            self._current_doc.load(pdf_path)
-            self._current_path = pdf_path
-            self._rotation = 0
-
-            # Update viewer if connected
-            if self._viewer_ref:
-                # Just update the current document - PDFViewer no longer uses pdf_view
-                # and will handle rendering via PyMuPDF
-                pass
-
-            return True
-
-        except Exception as e:
-            print(f"[DEBUG] Error opening PDF: {str(e)}")
-            self.close_current_pdf()
-            return False
-
-    def close_current_pdf(self, max_attempts: int = 3) -> None:
-        """Close the currently open PDF document with retry logic.
-
-        Args:
-            max_attempts: Maximum number of attempts to close the document
-        """
-        if self._current_doc:
-            last_error = None
-            for attempt in range(max_attempts):
-                try:
-                    # Close and cleanup document
-                    self._current_doc.close()
-                    self._current_doc.deleteLater()
-                    print("[DEBUG] Successfully closed PDF document")
-                    break
-                except Exception as e:
-                    last_error = e
-                    if attempt < max_attempts - 1:
-                        print(
-                            f"[DEBUG] Retry {attempt + 1}: Error closing PDF: {str(e)}"
-                        )
-                        import time
-
-                        time.sleep(0.5)  # Short delay between retries
-                    else:
-                        print(f"[DEBUG] All attempts to close PDF failed: {str(e)}")
-
-            # Always clean up references
-            self._current_doc = None
+    def close_current_pdf(self) -> None:
+        """Clear the currently tracked PDF."""
+        # Simply clear the path reference
+        if self._current_path:
+            print(f"[DEBUG] Stopped tracking PDF: {self._current_path}")
             self._current_path = None
-            self._rotation = 0
-
-            # If all attempts failed, log it but continue
-            if last_error:
-                print("[DEBUG] Cleaned up PDF references despite close errors")
 
     def generate_output_path(self, template: str, data: Dict[str, Any]) -> str:
         """Generate output path based on template and data.
@@ -421,8 +354,11 @@ class PDFManager(QObject):
         # Store original location for potential revert operation
         task.original_pdf_location = source_path
 
-        # Force close any open handles to this file
-        self._ensure_file_released(source_path)
+        # Ensure file is not locked and accessible
+        if not self._ensure_file_released(source_path):
+            raise ValueError(
+                f"Could not access file: {source_path} (file may be locked)"
+            )
 
         # Create temporary directory for atomic operations
         with TemporaryDirectory() as temp_dir:
@@ -579,48 +515,42 @@ class PDFManager(QObject):
             print(f"[DEBUG] Error reverting PDF: {str(e)}")
             return False
 
-    def _ensure_file_released(self, file_path: str, max_attempts: int = 3) -> None:
-        """Ensure any resources for the file are released with retry logic.
+    def _ensure_file_released(self, file_path: str, max_attempts: int = 3) -> bool:
+        """Check if a file is accessible and not locked.
 
         Args:
-            file_path: Path to the file to release
-            max_attempts: Maximum number of attempts to release the file
+            file_path: Path to the file to check
+            max_attempts: Maximum number of attempts to check file accessibility
+
+        Returns:
+            bool: True if file is accessible, False otherwise
         """
-        # Use normalized paths for comparison
-        normalized_path = self._normalize_path(file_path)
-        current_normalized = (
-            self._normalize_path(self._current_path) if self._current_path else None
-        )
+        import time
 
-        # If this is the current open document, close it with retries
-        if normalized_path == current_normalized and self._current_doc is not None:
-            self.close_current_pdf(max_attempts=max_attempts)
+        # If this is the current tracked file, stop tracking it
+        if self._paths_equal(file_path, self._current_path):
+            self.close_current_pdf()
 
-        # Try to verify file is released by attempting to open it
+        # Try to verify file is accessible
         for attempt in range(max_attempts):
             try:
-                with open(file_path, "rb") as test_file:
-                    # Just testing if we can open it
-                    pass
-                print(f"[DEBUG] Verified file is released: {file_path}")
-                return
+                with open(file_path, "rb") as _:
+                    print(f"[DEBUG] Verified file is accessible: {file_path}")
+                    return True
             except PermissionError:
                 if attempt < max_attempts - 1:
-                    print(
-                        f"[DEBUG] Retry {attempt + 1}: File still locked: {file_path}"
-                    )
-                    import time
-
+                    print(f"[DEBUG] File locked, retry {attempt + 1}: {file_path}")
                     time.sleep(0.5)  # Short delay between retries
                     continue
-                else:
-                    print(
-                        f"[DEBUG] Warning: Could not verify file release after {max_attempts} attempts: {file_path}"
-                    )
+                print(
+                    f"[DEBUG] File inaccessible after {max_attempts} attempts: {file_path}"
+                )
+                return False
             except FileNotFoundError:
-                # File doesn't exist, so no lock to worry about
-                print(f"[DEBUG] File does not exist, no lock to release: {file_path}")
-                return
+                print(f"[DEBUG] File does not exist: {file_path}")
+                return True  # Consider non-existent files as "released"
             except Exception as e:
-                print(f"[DEBUG] Unexpected error checking file lock: {str(e)}")
-                return
+                print(f"[DEBUG] Error checking file: {str(e)}")
+                return False
+
+        return False
