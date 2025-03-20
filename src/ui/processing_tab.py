@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QHBoxLayout,
+    QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -232,6 +233,10 @@ class ProcessingTab(QWidget):
                 border-color: #ced4da;
             }
         """)
+        self.file_info_label.setWordWrap(True)
+        self.file_info_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        # Enable text elision for the label
+        self.file_info_label.setTextFormat(Qt.TextFormat.PlainText)
         self.file_info_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.file_info_label.mousePressEvent = lambda e: self._select_pdf_file()
         info_layout.addWidget(self.file_info_label)
@@ -733,9 +738,15 @@ class ProcessingTab(QWidget):
     def _update_file_info_label(self, file_path: Optional[str] = None) -> None:
         """Update the file information label with the current or specified file."""
         if file_path:
-            self.file_info_label.setText(f"File: {os.path.basename(file_path)}")
+            file_name = os.path.basename(file_path)
+            self.file_info_label.setText(f"File: {file_name}")
+            # Set tooltip to show full path on hover
+            self.file_info_label.setToolTip(file_path)
+            # Force the label to adjust to the available width
+            QTimer.singleShot(0, self.file_info_label.adjustSize)
         else:
             self.file_info_label.setText("No file loaded")
+            self.file_info_label.setToolTip("")
 
     def _load_next_pdf(self, skip: bool = False) -> None:
         """Load the next PDF file with improved file handle management."""

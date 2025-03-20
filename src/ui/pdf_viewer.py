@@ -257,6 +257,7 @@ class PDFViewer(QWidget):
 
         # Create a spacer widget for the left side
         left_spacer = QWidget()
+        left_spacer.setObjectName("spacer_left")
         left_spacer.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
@@ -315,6 +316,7 @@ class PDFViewer(QWidget):
 
         # Create a spacer widget for the right side
         right_spacer = QWidget()
+        right_spacer.setObjectName("spacer_right")
         right_spacer.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
