@@ -88,7 +88,7 @@ class ProcessingTab(QWidget):
         """)
 
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(6, 10, 6, 10)  # Reduced horizontal margins
 
         if title:
             label = QLabel(title)
@@ -118,6 +118,8 @@ class ProcessingTab(QWidget):
 
         self.filters_container = QWidget()
         self.filters_layout = QVBoxLayout(self.filters_container)
+        self.filters_layout.setContentsMargins(0, 0, 0, 0)  # Remove container margins
+        self.filters_layout.setSpacing(5)  # Reduce spacing between filters
         filters_layout.addWidget(self.filters_container)
 
         right_layout.addWidget(filters_frame)
@@ -256,7 +258,20 @@ class ProcessingTab(QWidget):
             )
             # Connect text_changed signal to update process button state
             fuzzy.text_changed.connect(self._update_process_button)
+
+            # Set tighter layout for fuzzy search frame
+            fuzzy.setContentsMargins(2, 2, 2, 2)
+
+            # Allow the fuzzy search frame to expand to fill available space
+            fuzzy.setSizePolicy(
+                self.sizePolicy().horizontalPolicy(), self.sizePolicy().verticalPolicy()
+            )
+
             layout.addWidget(fuzzy)
+
+            # Set minimal margins for the filter frame
+            frame.setContentsMargins(2, 2, 2, 2)
+            layout.setContentsMargins(2, 4, 2, 4)  # Minimal horizontal margins
 
             # Add to main layout
             self.filters_layout.addWidget(frame)

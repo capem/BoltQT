@@ -49,8 +49,8 @@ class FuzzySearchFrame(QWidget):
     def _create_widgets(self) -> None:
         """Create and configure all child widgets."""
         layout = QVBoxLayout()
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(2)
+        layout.setContentsMargins(1, 1, 1, 1)  # Reduce margins further
+        layout.setSpacing(1)  # Reduce spacing
         self.setLayout(layout)
 
         # Entry widget with placeholder
@@ -60,15 +60,20 @@ class FuzzySearchFrame(QWidget):
 
         # Listbox
         self.listbox = QListWidget()
-        self.listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Allow horizontal scrollbar when needed, but don't show it always
+        self.listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.listbox.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Set fixed height to prevent excessive vertical growth but allow horizontal growth
+        self.listbox.setMaximumHeight(120)
+        # Make the list widget expand horizontally
+        self.listbox.setSizeAdjustPolicy(self.listbox.SizeAdjustPolicy.AdjustToContents)
         layout.addWidget(self.listbox)
 
     def _setup_styles(self) -> None:
         """Configure styles for the widgets."""
         self.entry.setStyleSheet("""
             QLineEdit {
-                padding: 5px;
+                padding: 3px;
                 border: 1px solid #ccc;
                 border-radius: 3px;
                 font-family: 'Segoe UI';
@@ -85,7 +90,7 @@ class FuzzySearchFrame(QWidget):
                 font-size: 10pt;
             }
             QListWidget::item {
-                padding: 5px;
+                padding: 3px;
             }
             QListWidget::item:selected {
                 background: #007bff;
