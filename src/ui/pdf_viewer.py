@@ -39,9 +39,10 @@ class PageWidget(QLabel):
         super().__init__(parent)
         self.page_num = page_num
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setStyleSheet("margin: 5px; background-color: white; border: 1px solid #ddd;")
-        self.setMinimumWidth(600)
+        # Remove minimum width constraint to let the PDF render at its natural size
+        # self.setMinimumWidth(600)
 
 
 class MultiPageWidget(QWidget):
@@ -52,8 +53,11 @@ class MultiPageWidget(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(20)  # Space between pages
         self.layout.setContentsMargins(10, 10, 10, 10)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)  # Center pages horizontally
         self.page_widgets: List[PageWidget] = []
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Set a gray background for the area around pages
+        self.setStyleSheet("background-color: #f0f0f0;")
 
 
 class PDFViewer(QWidget):
@@ -123,6 +127,7 @@ class PDFViewer(QWidget):
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setStyleSheet("background-color: #f0f0f0;")
         
         # Create multi-page container
         self.page_container = MultiPageWidget()
@@ -153,6 +158,13 @@ class PDFViewer(QWidget):
                 background: white;
                 border: 1px solid #ccc;
                 border-radius: 5px;
+                font-family: 'Segoe UI';
+                font-size: 10pt;
+            }
+            /* Style for spacer widgets */
+            QWidget[objectName^="spacer"] {
+                background: transparent;
+                border: none;
             }
             QToolBar {
                 background: #f0f0f0;
@@ -168,6 +180,8 @@ class PDFViewer(QWidget):
                 border: 1px solid transparent;
                 border-radius: 3px;
                 padding: 3px;
+                font-family: 'Segoe UI';
+                font-size: 10pt;
             }
             QToolButton:hover {
                 background: #e0e0e0;
@@ -178,13 +192,30 @@ class PDFViewer(QWidget):
             }
             QLabel {
                 font-family: 'Segoe UI';
-                font-size: 12pt;
+                font-size: 10pt;
             }
             QComboBox {
                 padding: 2px 5px;
                 border: 1px solid #ccc;
                 border-radius: 3px;
                 background: white;
+                font-family: 'Segoe UI';
+                font-size: 10pt;
+            }
+            QPushButton {
+                font-family: 'Segoe UI';
+                font-size: 10pt;
+                padding: 4px 8px;
+            }
+            QSlider {
+                font-family: 'Segoe UI';
+            }
+            QScrollArea {
+                background: #f0f0f0;
+                border: none;
+            }
+            QScrollArea > QWidget > QWidget {
+                background: #f0f0f0;
             }
         """)
 
@@ -196,7 +227,9 @@ class PDFViewer(QWidget):
         
         # Create a spacer widget for the left side
         left_spacer = QWidget()
+        left_spacer.setObjectName("spacerLeft")
         left_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        left_spacer.setStyleSheet("background: transparent; border: none;")
         toolbar.addWidget(left_spacer)
         
         # Page indicator (Keep this for reference)
@@ -252,7 +285,9 @@ class PDFViewer(QWidget):
         
         # Create a spacer widget for the right side
         right_spacer = QWidget()
+        right_spacer.setObjectName("spacerRight")
         right_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        right_spacer.setStyleSheet("background: transparent; border: none;")
         toolbar.addWidget(right_spacer)
         
         return toolbar
@@ -545,8 +580,8 @@ class PDFViewer(QWidget):
             
             # Update the page widget
             page_widget.setPixmap(pixmap)
-            page_widget.setMinimumSize(pixmap.size())
-            page_widget.adjustSize()
+            # Set the exact size of the pixmap so it doesn't stretch
+            page_widget.setFixedSize(pixmap.size())
             
         except Exception as e:
             print(f"[DEBUG] Error rendering page {page_num}: {str(e)}")
@@ -683,6 +718,9 @@ class PDFViewer(QWidget):
         if self.scroll_area.verticalScrollBar().isVisible():
             scroll_width -= self.scroll_area.verticalScrollBar().width()
         
+        # Add some margin for better visual appearance
+        scroll_width -= 40  # 20px margin on each side
+        
         # Get the current page for reference
         page = self.doc[0]  # Use first page as reference
             
@@ -708,6 +746,10 @@ class PDFViewer(QWidget):
         
         if self.scroll_area.verticalScrollBar().isVisible():
             scroll_width -= self.scroll_area.verticalScrollBar().width()
+            
+        # Add some margin for better visual appearance
+        scroll_width -= 40  # 20px margin on each side
+        scroll_height -= 40  # 20px margin on top and bottom
         
         # Calculate zoom factors for width and height
         page_width = page.rect.width
