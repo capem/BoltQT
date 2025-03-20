@@ -1,59 +1,52 @@
 from __future__ import annotations
-from typing import Optional, Dict, Any, List
-import os
-import math
+from typing import Optional, List
 import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (
     QWidget,
     QLabel,
     QVBoxLayout,
-    QHBoxLayout,
     QToolBar,
-    QPushButton,
     QToolButton,
     QScrollArea,
     QSizePolicy,
-    QComboBox,
     QFrame,
-    QSlider,
-    QVBoxLayout,
 )
 from PyQt6.QtGui import (
     QPixmap,
-    QIcon,
     QImage,
-    QPainter,
-    QTransform,
     QKeySequence,
     QAction,
-    QColor,
 )
-from PyQt6.QtCore import Qt, QEvent, QSize, QBuffer, QByteArray, pyqtSignal, QRect
+from PyQt6.QtCore import Qt, QEvent, pyqtSignal, QRect
 from ..utils.pdf_manager import PDFManager
 
 
 class PageWidget(QLabel):
     """Widget for displaying a single PDF page."""
-    
+
     def __init__(self, page_num: int, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.page_num = page_num
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet("margin: 5px; background-color: white; border: 1px solid #ddd;")
+        self.setStyleSheet(
+            "margin: 5px; background-color: white; border: 1px solid #ddd;"
+        )
         # Remove minimum width constraint to let the PDF render at its natural size
         # self.setMinimumWidth(600)
 
 
 class MultiPageWidget(QWidget):
     """Container for all PDF page widgets."""
-    
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(20)  # Space between pages
         self.layout.setContentsMargins(10, 10, 10, 10)
-        self.layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)  # Center pages horizontally
+        self.layout.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter
+        )  # Center pages horizontally
         self.page_widgets: List[PageWidget] = []
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         # Set a gray background for the area around pages
@@ -66,7 +59,7 @@ class PDFViewer(QWidget):
     # Signals for communication with parent widgets
     pdfLoaded = pyqtSignal(bool)
     pageChanged = pyqtSignal(int, int)  # current page, total pages
-    
+
     # Zoom levels (percentages)
     ZOOM_LEVELS = [25, 50, 75, 100, 125, 150, 175, 200, 300, 400, 500]
     # Rotation angles (degrees)
@@ -76,7 +69,7 @@ class PDFViewer(QWidget):
         self, pdf_manager: PDFManager, parent: Optional[QWidget] = None
     ) -> None:
         """Initialize the PDF viewer with PyMuPDF integration.
-        
+
         Args:
             pdf_manager: Manager for PDF operations
             parent: Parent widget
@@ -86,26 +79,26 @@ class PDFViewer(QWidget):
         self.pdf_manager = pdf_manager
         # Register this viewer with the manager for callbacks
         self.pdf_manager._viewer_ref = self
-        
+
         self.current_pdf: Optional[str] = None
         self.zoom_level: float = 1.0
         self.rotation_angle: int = 0
         self.current_page: int = 0  # Used for page indicator
         self.total_pages: int = 0
-        
+
         # PyMuPDF document
         self.doc: Optional[fitz.Document] = None
-        
+
         # Flag to track when we're programmatically scrolling
         self._programmatic_scroll = False
 
         # Initialize UI components
         self._init_ui()
         self._setup_shortcuts()
-        
+
         # Set initial state
         self._update_ui_state(False)
-        
+
         # Connect scroll signals
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
@@ -115,28 +108,34 @@ class PDFViewer(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        
+
         # Create toolbar with controls
         self.toolbar = self._create_toolbar()
         main_layout.addWidget(self.toolbar)
-        
+
         # Create scroll area for continuous PDF viewing
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.scroll_area.setStyleSheet("background-color: #f0f0f0;")
-        
+
         # Create multi-page container
         self.page_container = MultiPageWidget()
         self.scroll_area.setWidget(self.page_container)
-        
+
         # Enable touch and wheel events for scrolling
-        self.scroll_area.viewport().setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+        self.scroll_area.viewport().setAttribute(
+            Qt.WidgetAttribute.WA_AcceptTouchEvents, True
+        )
         self.scroll_area.viewport().installEventFilter(self)
-        
+
         # Loading label
         self.loading_label = QLabel("No PDF loaded", self)
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -148,10 +147,10 @@ class PDFViewer(QWidget):
             border-radius: 10px;
         """)
         self.loading_label.hide()
-        
+
         # Add widgets to layout
         main_layout.addWidget(self.scroll_area)
-        
+
         # Set stylesheets
         self.setStyleSheet("""
             QWidget {
@@ -224,72 +223,76 @@ class PDFViewer(QWidget):
         toolbar = QToolBar("PDF Controls")
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
-        
+
         # Create a spacer widget for the left side
         left_spacer = QWidget()
         left_spacer.setObjectName("spacerLeft")
-        left_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        left_spacer.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         left_spacer.setStyleSheet("background: transparent; border: none;")
         toolbar.addWidget(left_spacer)
-        
+
         # Page indicator (Keep this for reference)
         self.page_indicator = QLabel("0 / 0")
         self.page_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.page_indicator.setMinimumWidth(80)
         toolbar.addWidget(self.page_indicator)
-        
+
         toolbar.addSeparator()
-        
+
         # Zoom controls
         self.zoom_out_btn = QToolButton()
         self.zoom_out_btn.setText("Zoom -")
         self.zoom_out_btn.setToolTip("Zoom Out")
         self.zoom_out_btn.clicked.connect(self.zoom_out)
         toolbar.addWidget(self.zoom_out_btn)
-        
+
         self.zoom_in_btn = QToolButton()
         self.zoom_in_btn.setText("Zoom +")
         self.zoom_in_btn.setToolTip("Zoom In")
         self.zoom_in_btn.clicked.connect(self.zoom_in)
         toolbar.addWidget(self.zoom_in_btn)
-        
+
         toolbar.addSeparator()
-        
+
         # Rotation controls
         self.rotate_left_btn = QToolButton()
         self.rotate_left_btn.setText("Rotate ↺")
         self.rotate_left_btn.setToolTip("Rotate Left")
         self.rotate_left_btn.clicked.connect(self.rotate_left)
         toolbar.addWidget(self.rotate_left_btn)
-        
+
         self.rotate_right_btn = QToolButton()
         self.rotate_right_btn.setText("Rotate ↻")
         self.rotate_right_btn.setToolTip("Rotate Right")
         self.rotate_right_btn.clicked.connect(self.rotate_right)
         toolbar.addWidget(self.rotate_right_btn)
-        
+
         toolbar.addSeparator()
-        
+
         # Fit controls
         self.fit_width_btn = QToolButton()
         self.fit_width_btn.setText("Fit Width")
         self.fit_width_btn.setToolTip("Fit to Width")
         self.fit_width_btn.clicked.connect(self.fit_width)
         toolbar.addWidget(self.fit_width_btn)
-        
+
         self.fit_page_btn = QToolButton()
         self.fit_page_btn.setText("Fit Page")
         self.fit_page_btn.setToolTip("Fit to Page")
         self.fit_page_btn.clicked.connect(self.fit_page)
         toolbar.addWidget(self.fit_page_btn)
-        
+
         # Create a spacer widget for the right side
         right_spacer = QWidget()
         right_spacer.setObjectName("spacerRight")
-        right_spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        right_spacer.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         right_spacer.setStyleSheet("background: transparent; border: none;")
         toolbar.addWidget(right_spacer)
-        
+
         return toolbar
 
     def _setup_shortcuts(self) -> None:
@@ -299,43 +302,45 @@ class PDFViewer(QWidget):
         self.prev_action.setShortcut(QKeySequence.StandardKey.MoveToPreviousPage)
         self.prev_action.triggered.connect(self.previous_page)
         self.addAction(self.prev_action)
-        
+
         self.next_action = QAction("Next Page", self)
         self.next_action.setShortcut(QKeySequence.StandardKey.MoveToNextPage)
         self.next_action.triggered.connect(self.next_page)
         self.addAction(self.next_action)
-        
+
         # Zoom shortcuts
         self.zoom_in_action = QAction("Zoom In", self)
         self.zoom_in_action.setShortcut(QKeySequence("Ctrl++"))
         self.zoom_in_action.triggered.connect(self.zoom_in)
         self.addAction(self.zoom_in_action)
-        
+
         self.zoom_out_action = QAction("Zoom Out", self)
         self.zoom_out_action.setShortcut(QKeySequence("Ctrl+-"))
         self.zoom_out_action.triggered.connect(self.zoom_out)
         self.addAction(self.zoom_out_action)
-        
+
         # Rotation shortcuts
         self.rotate_left_action = QAction("Rotate Left", self)
         self.rotate_left_action.setShortcut(QKeySequence("Ctrl+["))
         self.rotate_left_action.triggered.connect(self.rotate_left)
         self.addAction(self.rotate_left_action)
-        
+
         self.rotate_right_action = QAction("Rotate Right", self)
         self.rotate_right_action.setShortcut(QKeySequence("Ctrl+]"))
         self.rotate_right_action.triggered.connect(self.rotate_right)
         self.addAction(self.rotate_right_action)
-        
+
         # Jump to first/last page
         self.first_page_action = QAction("First Page", self)
         self.first_page_action.setShortcut(QKeySequence("Home"))
         self.first_page_action.triggered.connect(lambda: self.jump_to_page(0))
         self.addAction(self.first_page_action)
-        
+
         self.last_page_action = QAction("Last Page", self)
         self.last_page_action.setShortcut(QKeySequence("End"))
-        self.last_page_action.triggered.connect(lambda: self.jump_to_page(self.total_pages - 1))
+        self.last_page_action.triggered.connect(
+            lambda: self.jump_to_page(self.total_pages - 1)
+        )
         self.addAction(self.last_page_action)
 
     def eventFilter(self, obj, event):
@@ -365,34 +370,42 @@ class PDFViewer(QWidget):
 
         # Let the base class handle the event
         return super().eventFilter(obj, event)
-        
+
     def _on_scroll(self, value):
         """Update current page indicator based on scroll position."""
-        if not self.doc or not self.page_container.page_widgets or self._programmatic_scroll:
+        if (
+            not self.doc
+            or not self.page_container.page_widgets
+            or self._programmatic_scroll
+        ):
             return
-            
+
         # Find the page that's most visible in the viewport
-        viewport_rect = QRect(0, self.scroll_area.verticalScrollBar().value(),
-                             self.scroll_area.viewport().width(),
-                             self.scroll_area.viewport().height())
-        
+        viewport_rect = QRect(
+            0,
+            self.scroll_area.verticalScrollBar().value(),
+            self.scroll_area.viewport().width(),
+            self.scroll_area.viewport().height(),
+        )
+
         best_visible_area = 0
         visible_page = 0
-        
+
         for i, page_widget in enumerate(self.page_container.page_widgets):
             # Get page position relative to scroll area
             page_pos = page_widget.mapTo(self.scroll_area, page_widget.pos())
-            page_rect = QRect(page_pos.x(), page_pos.y(), 
-                             page_widget.width(), page_widget.height())
-            
+            page_rect = QRect(
+                page_pos.x(), page_pos.y(), page_widget.width(), page_widget.height()
+            )
+
             # Calculate intersection with viewport
             intersection = viewport_rect.intersected(page_rect)
             visible_area = intersection.width() * intersection.height()
-            
+
             if visible_area > best_visible_area:
                 best_visible_area = visible_area
                 visible_page = i
-        
+
         # Update current page if changed
         if visible_page != self.current_page:
             self.current_page = visible_page
@@ -406,19 +419,19 @@ class PDFViewer(QWidget):
             if self.doc:
                 self.doc.close()
                 self.doc = None
-            
+
             # Clear references
             self.current_pdf = None
             self.current_page = 0
             self.total_pages = 0
-            
+
             # Clear page widgets
             while self.page_container.layout.count():
                 item = self.page_container.layout.takeAt(0)
                 if item.widget():
                     item.widget().deleteLater()
             self.page_container.page_widgets.clear()
-            
+
             # Update UI
             self._update_page_indicator()
             self._update_ui_state(False)
@@ -458,7 +471,7 @@ class PDFViewer(QWidget):
             # Update zoom level if provided
             if zoom is not None:
                 self.zoom_level = zoom
-            
+
             # Update rotation if provided
             if rotation is not None and rotation in self.ROTATION_ANGLES:
                 self.rotation_angle = rotation
@@ -468,34 +481,37 @@ class PDFViewer(QWidget):
                 try:
                     # Clear any existing document first
                     self.clear_pdf()
-                    
+
                     # Load PDF with PyMuPDF
                     self.doc = fitz.open(pdf_path)
                     self.total_pages = len(self.doc)
-                    
+
                     # Also register with PDFManager
                     self.pdf_manager.open_pdf(pdf_path)
-                    
+
                     # Update current PDF path
                     self.current_pdf = pdf_path
-                    
+
                     # Render all pages
                     self._render_all_pages()
-                    
+
                     # Jump to specified page
                     self.jump_to_page(page if page < self.total_pages else 0)
-                    
+
                     # Update UI state
                     self._update_ui_state(True)
-                    
+
                     # Emit signal that PDF loaded successfully
                     self.pdfLoaded.emit(True)
                     break
 
                 except Exception as e:
                     if attempt < retry_count - 1:
-                        print(f"[DEBUG] Retry {attempt + 1}: Error loading PDF: {str(e)}")
+                        print(
+                            f"[DEBUG] Retry {attempt + 1}: Error loading PDF: {str(e)}"
+                        )
                         import time
+
                         time.sleep(0.5)  # Short delay between retries
                         continue
                     raise  # Re-raise the last exception if all retries failed
@@ -517,7 +533,7 @@ class PDFViewer(QWidget):
         """Render all pages of the PDF document."""
         if not self.doc:
             return
-            
+
         try:
             # Clear previous pages
             while self.page_container.layout.count():
@@ -525,68 +541,76 @@ class PDFViewer(QWidget):
                 if item.widget():
                     item.widget().deleteLater()
             self.page_container.page_widgets.clear()
-            
+
             # Create widgets for each page
             for page_num in range(self.total_pages):
                 page_widget = PageWidget(page_num)
                 self.page_container.layout.addWidget(page_widget)
                 self.page_container.page_widgets.append(page_widget)
-                
+
                 # Render the page
                 self._render_page(page_num)
-                
+
             # Update page indicator
             self._update_page_indicator()
-            
+
         except Exception as e:
             print(f"[DEBUG] Error rendering PDF pages: {str(e)}")
 
     def _render_page(self, page_num: int) -> None:
         """Render a specific page of the PDF document.
-        
+
         Args:
             page_num: The page number to render (0-indexed)
         """
         if not self.doc or page_num < 0 or page_num >= self.total_pages:
             return
-            
+
         try:
             # Get the page widget
             if page_num >= len(self.page_container.page_widgets):
                 print(f"[DEBUG] Page widget not found for page {page_num}")
                 return
-                
+
             page_widget = self.page_container.page_widgets[page_num]
-            
+
             # Get the PyMuPDF page
             page = self.doc[page_num]
-            
+
             # Apply zoom level
             zoom_matrix = fitz.Matrix(self.zoom_level, self.zoom_level)
-            
+
             # Apply rotation - fixed to use proper rotation method
             if self.rotation_angle:
                 # PyMuPDF requires rotation in degrees
                 zoom_matrix = zoom_matrix * fitz.Matrix(self.rotation_angle)
-            
+
             # Render page to pixmap
             pix = page.get_pixmap(matrix=zoom_matrix, alpha=False)
-            
+
             # Convert pixmap to QImage
-            img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
-            
+            img = QImage(
+                pix.samples,
+                pix.width,
+                pix.height,
+                pix.stride,
+                QImage.Format.Format_RGB888,
+            )
+
             # Convert QImage to QPixmap
             pixmap = QPixmap.fromImage(img)
-            
+
             # Update the page widget
             page_widget.setPixmap(pixmap)
             # Set the exact size of the pixmap so it doesn't stretch
             page_widget.setFixedSize(pixmap.size())
-            
+
         except Exception as e:
             print(f"[DEBUG] Error rendering page {page_num}: {str(e)}")
             if page_num < len(self.page_container.page_widgets):
-                self.page_container.page_widgets[page_num].setText(f"Error rendering page {page_num + 1}:\n{str(e)}")
+                self.page_container.page_widgets[page_num].setText(
+                    f"Error rendering page {page_num + 1}:\n{str(e)}"
+                )
 
     def _update_page_indicator(self) -> None:
         """Update the page indicator label."""
@@ -628,10 +652,10 @@ class PDFViewer(QWidget):
         if self.doc:
             # Remember the current page before re-rendering
             current_page = self.current_page
-            
+
             # Re-render all pages with new zoom
             self._render_all_pages()
-            
+
             # Jump back to the page we were on
             self.jump_to_page(current_page)
 
@@ -655,15 +679,15 @@ class PDFViewer(QWidget):
         if self.doc:
             # Remember the current page before re-rendering
             current_page = self.current_page
-            
+
             # Re-render all pages with new rotation
             self._render_all_pages()
-            
+
             # Jump back to the page we were on
             self.jump_to_page(current_page)
-        
+
         # Store rotation in PDF manager for persistence
-        if self.pdf_manager and hasattr(self.pdf_manager, '_rotation'):
+        if self.pdf_manager and hasattr(self.pdf_manager, "_rotation"):
             self.pdf_manager._rotation = self.rotation_angle
 
     def next_page(self) -> None:
@@ -678,32 +702,32 @@ class PDFViewer(QWidget):
 
     def jump_to_page(self, page_num: int) -> None:
         """Jump to a specific page.
-        
+
         Args:
             page_num: The page number to jump to (0-indexed)
         """
         if not self.doc or page_num < 0 or page_num >= self.total_pages:
             return
-            
+
         try:
             # Set flag to avoid triggering scroll handler
             self._programmatic_scroll = True
-            
+
             # Get the target page widget
             if page_num < len(self.page_container.page_widgets):
                 target_widget = self.page_container.page_widgets[page_num]
-                
+
                 # Scroll to the widget's position
                 self.scroll_area.ensureWidgetVisible(target_widget, 0, 0)
-                
+
                 # Update current page
                 self.current_page = page_num
                 self._update_page_indicator()
                 self.pageChanged.emit(self.current_page, self.total_pages)
-            
+
             # Reset flag
             self._programmatic_scroll = False
-            
+
         except Exception as e:
             print(f"[DEBUG] Error jumping to page {page_num}: {str(e)}")
             self._programmatic_scroll = False
@@ -712,22 +736,22 @@ class PDFViewer(QWidget):
         """Fit the pages to the width of the viewport."""
         if not self.doc:
             return
-            
+
         # Get scroll area width (accounting for scrollbar)
         scroll_width = self.scroll_area.viewport().width()
         if self.scroll_area.verticalScrollBar().isVisible():
             scroll_width -= self.scroll_area.verticalScrollBar().width()
-        
+
         # Add some margin for better visual appearance
         scroll_width -= 40  # 20px margin on each side
-        
+
         # Get the current page for reference
         page = self.doc[0]  # Use first page as reference
-            
+
         # Calculate zoom factor to fit width
         page_width = page.rect.width
         new_zoom = scroll_width / page_width
-        
+
         # Set new zoom level
         self.zoom_level = new_zoom
         self._update_zoom()
@@ -736,31 +760,31 @@ class PDFViewer(QWidget):
         """Fit the pages to the height of the viewport."""
         if not self.doc:
             return
-        
+
         # Get the current page for reference
         page = self.doc[0]  # Use first page as reference
-            
+
         # Get scroll area dimensions (accounting for scrollbars)
         scroll_width = self.scroll_area.viewport().width()
         scroll_height = self.scroll_area.viewport().height()
-        
+
         if self.scroll_area.verticalScrollBar().isVisible():
             scroll_width -= self.scroll_area.verticalScrollBar().width()
-            
+
         # Add some margin for better visual appearance
         scroll_width -= 40  # 20px margin on each side
         scroll_height -= 40  # 20px margin on top and bottom
-        
+
         # Calculate zoom factors for width and height
         page_width = page.rect.width
         page_height = page.rect.height
-        
+
         zoom_width = scroll_width / page_width
         zoom_height = scroll_height / page_height
-        
+
         # Use the smaller zoom factor to ensure the entire page fits
         new_zoom = min(zoom_width, zoom_height) * 0.95  # 95% to add a small margin
-        
+
         # Set new zoom level
         self.zoom_level = new_zoom
         self._update_zoom()
