@@ -20,6 +20,7 @@ from src.ui.mac_tab_widget import MacTabWidget
 from src.utils.config_manager import ConfigManager
 from src.utils.excel_manager import ExcelManager
 from src.utils.pdf_manager import PDFManager
+from src.utils.widget_debugger import WidgetDebugger, setup_global_debug_shortcut
 
 
 class MainWindow(QMainWindow):
@@ -115,6 +116,21 @@ class MainWindow(QMainWindow):
         self.app.processEvents()  # Process events to update UI
         self.tab_widget.addTab(self.processing_tab, "Processing")
         self.tab_widget.addTab(self.config_tab, "Configuration")
+        
+        # Add debug menu with widget inspector
+        from PyQt6.QtGui import QAction
+        menu_bar = self.menuBar()
+        debug_menu = menu_bar.addMenu("&Debug")
+        
+        # Add toggle action to menu
+        debug_widget_action = QAction("&Widget Inspector", self)
+        debug_widget_action.setCheckable(True)
+        debug_widget_action.setShortcut("Ctrl+Shift+D")
+        debug_widget_action.setStatusTip("Inspect UI elements by clicking on them")
+        debug_widget_action.triggered.connect(
+            lambda checked: WidgetDebugger.enable() if checked else WidgetDebugger.disable()
+        )
+        debug_menu.addAction(debug_widget_action)
 
         # Hide loading screen after a short delay
         self.loading_screen.set_progress(100, "Ready!")

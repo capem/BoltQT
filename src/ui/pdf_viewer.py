@@ -138,18 +138,6 @@ class PDFViewer(QWidget):
         )
         self.scroll_area.viewport().installEventFilter(self)
 
-        # Loading label
-        self.loading_label = QLabel("No PDF loaded", self)
-        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.loading_label.setStyleSheet("""
-            background: rgba(0, 0, 0, 50);
-            color: white;
-            border: none;
-            padding: 20px;
-            border-radius: 10px;
-        """)
-        self.loading_label.hide()
-
         # Add widgets to layout
         main_layout.addWidget(self.scroll_area)
 
@@ -487,11 +475,6 @@ class PDFViewer(QWidget):
             show_loading: Whether to show the loading label.
             retry_count: Number of times to retry loading if file is locked.
         """
-        if show_loading:
-            self.loading_label.setText("Loading PDF...")
-            self.loading_label.show()
-            self.loading_label.raise_()
-
         try:
             if not pdf_path:
                 self.clear_pdf()
@@ -545,15 +528,8 @@ class PDFViewer(QWidget):
         except Exception as e:
             error_msg = f"Error displaying PDF: {str(e)}"
             print(f"[DEBUG] {error_msg}")
-            self.loading_label.setText(f"{error_msg}\n\nPlease try again.")
-            self.loading_label.show()
             self.current_pdf = None  # Ensure we don't keep reference to failed load
             self.pdfLoaded.emit(False)
-
-        finally:
-            # Hide loading label if successful
-            if show_loading and self.current_pdf:
-                self.loading_label.hide()
 
     def _render_all_pages(self) -> None:
         """Render all pages of the PDF document."""
