@@ -189,6 +189,9 @@ class InitializationThread(QThread):
 def main() -> int:
     # Create application first
     app = QApplication(sys.argv)
+    
+    # Process events before creating loading screen to ensure UI is responsive
+    app.processEvents()
 
     # Apply Mac-inspired styling
     apply_mac_style(app)
@@ -196,13 +199,16 @@ def main() -> int:
     # Application name - define once for consistency
     app_name = "BoltQT"
 
-    # Create and show loading screen first
+    # Create loading screen with pre-set progress to avoid empty initial display
     loading_screen = EnhancedLoadingScreen(app_name=app_name)
+    loading_screen.progress = 5  # Set initial progress directly
+    loading_screen.progress_text = "Starting application..."
 
-    # Show the loading screen
+    # Show immediately and force paint
     loading_screen.show()
-    loading_screen.set_progress(5, "Starting application...")
-    app.processEvents()  # Process events to ensure loading screen appears before proceeding
+    app.processEvents()  # First process event to make sure it's visible
+    loading_screen.update()  # Force immediate repaint
+    app.processEvents()  # Second process event to ensure paint completes
 
     try:
         # Initialize main window with loading screen

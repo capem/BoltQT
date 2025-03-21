@@ -69,7 +69,7 @@ class EnhancedLoadingScreen(QWidget):
     COLOR_BG_TRANSLUCENT = QColor(248, 248, 248, 220)
 
     # Animation constants
-    FADE_IN_MS = 300  # Faster fade-in for better visual experience
+    FADE_IN_MS = 200  # Faster fade-in for better visual experience
 
     # Performance optimization flags
     ENABLE_PERF_LOGGING = False  # Disabled by default for production
@@ -142,6 +142,16 @@ class EnhancedLoadingScreen(QWidget):
                 f"__init__ - _calculate_dimensions() took {(dim_time - phase_start) * 1000:.2f}ms"
             )
             phase_start = dim_time
+            
+        # Pre-calculate expensive rendering elements
+        self._precalculate_rendering_elements()
+        
+        if ENABLE_PERF_LOGGING:
+            precalc_time = time.time()
+            logger.debug(
+                f"__init__ - _precalculate_rendering_elements() took {(precalc_time - phase_start) * 1000:.2f}ms"
+            )
+            phase_start = precalc_time
 
         # Initialize fonts without creating metrics yet
         self._percentage_font = QFont()
@@ -285,6 +295,44 @@ class EnhancedLoadingScreen(QWidget):
                 f"_calculate_dimensions - total time: {(end_time - total_start) * 1000:.2f}ms"
             )
 
+    def _precalculate_rendering_elements(self) -> None:
+        """Pre-calculate expensive rendering elements to avoid first-paint delays"""
+        # Create center point
+        self._center_point = QPointF(self.rect().center())
+        
+        # Create container rect
+        self._container_rect = QRect(
+            int(self._center_point.x() - self.container_width / 2),
+            int(self._center_point.y() - self.container_height / 2),
+            self.container_width,
+            self.container_height,
+        )
+        
+        # Create shadow rect
+        shadow_offset = 10
+        self._shadow_rect = QRect(
+            self._container_rect.x() - shadow_offset // 2,
+            self._container_rect.y() - shadow_offset // 2,
+            self._container_rect.width() + shadow_offset,
+            self._container_rect.height() + shadow_offset,
+        )
+        
+        # Pre-create background gradient
+        topLeft = QPointF(self._container_rect.topLeft())
+        bottomLeft = QPointF(self._container_rect.bottomLeft())
+        self._cached_bg_gradient = QLinearGradient(topLeft, bottomLeft)
+        self._cached_bg_gradient.setColorAt(0, self.COLOR_BG_LIGHT)
+        self._cached_bg_gradient.setColorAt(1, self.COLOR_BG_DARK)
+        
+        # Pre-create progress gradient
+        bar_left = (self.width() - self.progress_bar_width) / 2
+        bar_top = self._container_rect.bottom() - self.progress_bar_margin_bottom
+        self._cached_progress_gradient = QLinearGradient(
+            QPointF(bar_left, bar_top), QPointF(bar_left + self.progress_bar_width, bar_top)
+        )
+        self._cached_progress_gradient.setColorAt(0, self.COLOR_PRIMARY)
+        self._cached_progress_gradient.setColorAt(1, self.COLOR_SECONDARY)
+    
     def resizeEvent(self, event) -> None:
         """Handle resize event to recalculate cached values."""
         super().resizeEvent(event)
@@ -295,6 +343,8 @@ class EnhancedLoadingScreen(QWidget):
             self._cached_bg_gradient = None
             # Keep pulse colors cache as it's opacity-based, not size-based
             self._cached_progress_gradient = None
+            # Recalculate rendering elements after resize
+            self._precalculate_rendering_elements()
 
     def _setup_ui(self) -> None:
         """Set up the UI components using the calculated dimensions."""
@@ -393,40 +443,12 @@ class EnhancedLoadingScreen(QWidget):
             total_start = time.time()
             phase_start = total_start
 
-        # Pre-calculate container and shadow bounds for faster first paint
-        if not self._center_point:
-            self._center_point = QPointF(self.rect().center())
-
-        if not self._container_rect:
-            self._container_rect = QRect(
-                int(self._center_point.x() - self.container_width / 2),
-                int(self._center_point.y() - self.container_height / 2),
-                self.container_width,
-                self.container_height,
-            )
-
-        if not self._shadow_rect:
-            shadow_offset = 10
-            self._shadow_rect = QRect(
-                self._container_rect.x() - shadow_offset // 2,
-                self._container_rect.y() - shadow_offset // 2,
-                self._container_rect.width() + shadow_offset,
-                self._container_rect.height() + shadow_offset,
-            )
-
-        # Pre-create background gradient for faster first paint
-        if not self._cached_bg_gradient:
-            topLeft = QPointF(self._container_rect.topLeft())
-            bottomLeft = QPointF(self._container_rect.bottomLeft())
-            self._cached_bg_gradient = QLinearGradient(topLeft, bottomLeft)
-            self._cached_bg_gradient.setColorAt(0, self.COLOR_BG_LIGHT)
-            self._cached_bg_gradient.setColorAt(1, self.COLOR_BG_DARK)
-
-        # Just do a slight fade-in from the already visible state (0.9 to 1.0)
-        # This creates a subtle effect without making the user wait for the background
+        # Skip pre-calculations - we've already done them in _precalculate_rendering_elements
+        
+        # Create a faster fade-in with higher start opacity for better perceived performance
         self._create_animation(
             b"splash_opacity",
-            0.9,
+            0.95,  # Start at higher opacity
             1.0,
             self.FADE_IN_MS,
             easing=QEasingCurve.Type.OutCubic,
@@ -569,6 +591,9 @@ class EnhancedLoadingScreen(QWidget):
                 f"paintEvent - total time: {(end_time - total_start_time) * 1000:.2f}ms"
             )
 
+    # Configuration for optimized rendering
+    USE_SIMPLE_SHADOW = True  # Use simpler shadow rendering for better performance
+
     def _draw_container(self, painter: QPainter) -> None:
         """Draw the container background with subtle shadow."""
         if ENABLE_PERF_LOGGING:
@@ -616,10 +641,16 @@ class EnhancedLoadingScreen(QWidget):
                 )
                 phase_start = shadow_time
 
-        # Draw shadow
+        # Draw shadow with optimized rendering
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self.COLOR_SHADOW)
-        painter.drawRoundedRect(self._shadow_rect, 10, 10)
+        if self.USE_SIMPLE_SHADOW:
+            # Use simpler shadow with better performance
+            painter.setBrush(QColor(0, 0, 0, 15))  # Lighter, less expensive shadow
+            painter.drawRect(self._shadow_rect)  # Regular rect instead of rounded
+        else:
+            # Original shadow code
+            painter.setBrush(self.COLOR_SHADOW)
+            painter.drawRoundedRect(self._shadow_rect, 10, 10)
 
         if ENABLE_PERF_LOGGING:
             shadow_draw_time = time.time()

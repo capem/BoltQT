@@ -91,17 +91,17 @@ class ConfigTab(QWidget):
         if title:
             # Create header layout to contain the title
             header_layout = QHBoxLayout()
-            header_layout.setContentsMargins(0, 0, 0, 8)  # Bottom margin for spacing
+            header_layout.setContentsMargins(0, 0, 0, 4)  # Reduced bottom margin for spacing
 
             # Create section title label with Mac-style font
             label = QLabel(title)
             label.setProperty("heading", "true")  # Used for styling in stylesheet
             label.setStyleSheet("""
                 font-family: system-ui;
-                font-weight: 600; 
-                font-size: 14pt; 
+                font-weight: 600;
+                font-size: 12pt;
                 color: #000000;
-                margin-bottom: 5px;
+                margin-bottom: 3px;
                 background: transparent;
                 border: none;
             """)
@@ -120,8 +120,8 @@ class ConfigTab(QWidget):
             separator.setStyleSheet("background-color: #e0e0e0; max-height: 1px;")
             layout.addWidget(separator)
 
-            # Add a small space after the separator
-            layout.addSpacing(8)
+            # Add a smaller space after the separator
+            layout.addSpacing(4)
 
         return frame, layout
 

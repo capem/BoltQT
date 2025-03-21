@@ -90,23 +90,23 @@ class ProcessingTab(QWidget):
         """)
 
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(16, 20, 16, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 12, 12)  # Reduced all margins
+        layout.setSpacing(8)  # Reduced internal spacing
 
         if title:
             # Create header layout to contain the title
             header_layout = QHBoxLayout()
-            header_layout.setContentsMargins(0, 0, 0, 8)  # Bottom margin for spacing
+            header_layout.setContentsMargins(0, 0, 0, 4)  # Reduced bottom margin for spacing
 
             # Create section title label with Mac-style font
             label = QLabel(title)
             label.setProperty("heading", "true")  # Used for styling in stylesheet
             label.setStyleSheet("""
                 font-family: system-ui;
-                font-weight: 600; 
-                font-size: 14pt; 
+                font-weight: 600;
+                font-size: 12pt;
                 color: #000000;
-                margin-bottom: 5px;
+                margin-bottom: 3px;
                 background: transparent;
                 border: none;
             """)
@@ -125,8 +125,8 @@ class ProcessingTab(QWidget):
             separator.setStyleSheet("background-color: #e0e0e0; max-height: 1px;")
             layout.addWidget(separator)
 
-            # Add a small space after the separator
-            layout.addSpacing(8)
+            # Add a smaller space after the separator
+            layout.addSpacing(4)
 
         return frame, layout
 
@@ -134,8 +134,8 @@ class ProcessingTab(QWidget):
         """Setup the user interface."""
         # Create main layout
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(10, 8, 10, 8)  # Minimized vertical margins
+        layout.setSpacing(8)  # Reduced spacing
 
         # Create splitter for main panels
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -147,7 +147,7 @@ class ProcessingTab(QWidget):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(16)
+        right_layout.setSpacing(8)  # Reduced spacing between sections
 
         # Filters section
         filters_frame, filters_layout = self._create_section_frame("Filters")
@@ -155,14 +155,14 @@ class ProcessingTab(QWidget):
         self.filters_container = QWidget()
         self.filters_layout = QVBoxLayout(self.filters_container)
         self.filters_layout.setContentsMargins(0, 0, 0, 0)  # Remove container margins
-        self.filters_layout.setSpacing(8)  # Reduce spacing between filters
+        self.filters_layout.setSpacing(4)  # Minimal spacing between filters
         filters_layout.addWidget(self.filters_container)
 
         right_layout.addWidget(filters_frame)
 
         # Actions section
         actions_frame, actions_layout = self._create_section_frame("Actions")
-        actions_layout.setSpacing(12)  # Consistent spacing
+        actions_layout.setSpacing(6)  # Reduced spacing for actions
 
         # Process button
         self.process_button = QPushButton("Process File")
@@ -174,7 +174,7 @@ class ProcessingTab(QWidget):
         # Add focus style
         self.process_button.setStyleSheet("""
             QPushButton {
-                min-height: 30px;
+                min-height: 24px;
                 font-weight: 500;
             }
             QPushButton:default {
@@ -191,7 +191,7 @@ class ProcessingTab(QWidget):
         # Skip button
         self.skip_button = QPushButton("Skip File")
         self.skip_button.clicked.connect(lambda: self._load_next_pdf(skip=True))
-        self.skip_button.setStyleSheet("min-height: 30px;")
+        self.skip_button.setStyleSheet("min-height: 24px;")
         actions_layout.addWidget(self.skip_button)
 
         right_layout.addWidget(actions_frame)
@@ -201,6 +201,7 @@ class ProcessingTab(QWidget):
         center_panel = QWidget()
         center_layout = QVBoxLayout(center_panel)
         center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(4)  # Minimal spacing
 
         # PDF viewer section
         viewer_frame, viewer_layout = self._create_section_frame("PDF Viewer")
@@ -215,6 +216,7 @@ class ProcessingTab(QWidget):
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(4)  # Minimal spacing
 
         # File Information section
         info_frame, info_layout = self._create_section_frame("File Information")
@@ -223,7 +225,7 @@ class ProcessingTab(QWidget):
         self.file_info_label = QLabel("No file loaded")
         self.file_info_label.setStyleSheet("""
             QLabel {
-                padding: 5px;
+                padding: 3px;
                 background-color: #f8f9fa;
                 border: 1px solid #dee2e6;
                 border-radius: 4px;
@@ -319,9 +321,10 @@ class ProcessingTab(QWidget):
 
             layout.addWidget(fuzzy)
 
-            # Set minimal margins for the filter frame
-            frame.setContentsMargins(2, 2, 2, 2)
-            layout.setContentsMargins(2, 4, 2, 4)  # Minimal horizontal margins
+            # Set ultra-compact margins for the filter frame
+            frame.setContentsMargins(1, 1, 1, 1)
+            layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins
+            layout.setSpacing(2)  # Minimal spacing within filter
 
             # Add to main layout
             self.filters_layout.addWidget(frame)
