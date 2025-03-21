@@ -49,13 +49,14 @@ class FuzzySearchFrame(QWidget):
     def _create_widgets(self) -> None:
         """Create and configure all child widgets."""
         layout = QVBoxLayout()
-        layout.setContentsMargins(1, 1, 1, 1)  # Reduce margins further
-        layout.setSpacing(2)  # Slightly increased spacing for better readability
+        layout.setContentsMargins(0, 0, 0, 0)  # Remove margins completely
+        layout.setSpacing(0)  # Minimal spacing between widgets
         self.setLayout(layout)
 
         # Entry widget with placeholder
         self.entry = QLineEdit()
         self.entry.setPlaceholderText("Type to search...")
+        # self.entry.setFixedHeight(24)  # Reduce height of entry field
         layout.addWidget(self.entry)
 
         # Listbox
@@ -64,7 +65,7 @@ class FuzzySearchFrame(QWidget):
         self.listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.listbox.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         # Set fixed height to prevent excessive vertical growth but allow horizontal growth
-        self.listbox.setMaximumHeight(120)
+        self.listbox.setMaximumHeight(200)  # Reduce maximum height to save space
         # Make the list widget expand horizontally
         self.listbox.setSizeAdjustPolicy(self.listbox.SizeAdjustPolicy.AdjustToContents)
         layout.addWidget(self.listbox)
@@ -73,9 +74,9 @@ class FuzzySearchFrame(QWidget):
         """Configure styles for the widgets."""
         self.entry.setStyleSheet("""
             QLineEdit {
-                padding: 5px 8px;
+                padding: 3px 6px;
                 border: 1px solid #d1d1d1;
-                border-radius: 4px;
+                border-radius: 1px;
                 background-color: white;
                 font-family: system-ui;
                 font-size: 10pt;
@@ -87,16 +88,16 @@ class FuzzySearchFrame(QWidget):
 
         self.listbox.setStyleSheet("""
             QListWidget {
-                border: 1px solid #d1d1d1;
-                border-radius: 4px;
+                border: 1px solid #e0e0e0;
+                border-radius: 1px;
                 background-color: white;
                 font-family: system-ui;
                 font-size: 10pt;
                 outline: none;
             }
             QListWidget::item {
-                padding: 4px 8px;
-                border-bottom: 1px solid #f0f0f0;
+                padding: 1px 6px;
+                border-bottom: none;
             }
             QListWidget::item:selected {
                 background-color: #e6f2ff;

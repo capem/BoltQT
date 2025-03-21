@@ -90,13 +90,13 @@ class ProcessingTab(QWidget):
         """)
 
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(12, 12, 12, 12)  # Reduced all margins
-        layout.setSpacing(8)  # Reduced internal spacing
+        layout.setContentsMargins(8, 8, 8, 8)  # Further reduced margins for compactness
+        layout.setSpacing(4)  # Further reduced internal spacing
 
         if title:
             # Create header layout to contain the title
             header_layout = QHBoxLayout()
-            header_layout.setContentsMargins(0, 0, 0, 4)  # Reduced bottom margin for spacing
+            header_layout.setContentsMargins(0, 0, 0, 2)  # Minimal bottom margin for compact headings
 
             # Create section title label with Mac-style font
             label = QLabel(title)
@@ -155,17 +155,20 @@ class ProcessingTab(QWidget):
         self.filters_container = QWidget()
         self.filters_layout = QVBoxLayout(self.filters_container)
         self.filters_layout.setContentsMargins(0, 0, 0, 0)  # Remove container margins
-        self.filters_layout.setSpacing(4)  # Minimal spacing between filters
+        self.filters_layout.setSpacing(6)  # Further reduce spacing between filters
         filters_layout.addWidget(self.filters_container)
 
         right_layout.addWidget(filters_frame)
 
-        # Actions section
+        # Actions section (compact)
         actions_frame, actions_layout = self._create_section_frame("Actions")
-        actions_layout.setSpacing(6)  # Reduced spacing for actions
+        actions_layout.setSpacing(4)  # Further reduced spacing for more compact actions
+        actions_frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)  # Prevent vertical expansion
 
         # Process button
+        # Set up process button with fixed vertical size policy for compactness
         self.process_button = QPushButton("Process File")
+        self.process_button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.process_button.clicked.connect(self._process_current_file)
         self.process_button.setEnabled(False)
         # Make the process button the default button so it responds to Enter key press
@@ -174,7 +177,8 @@ class ProcessingTab(QWidget):
         # Add focus style
         self.process_button.setStyleSheet("""
             QPushButton {
-                min-height: 24px;
+                min-height: 22px;
+                padding: 2px 8px;
                 font-weight: 500;
             }
             QPushButton:default {
@@ -191,11 +195,15 @@ class ProcessingTab(QWidget):
         # Skip button
         self.skip_button = QPushButton("Skip File")
         self.skip_button.clicked.connect(lambda: self._load_next_pdf(skip=True))
-        self.skip_button.setStyleSheet("min-height: 24px;")
+        self.skip_button.setStyleSheet("min-height: 22px; padding: 2px 8px;")
+        self.skip_button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         actions_layout.addWidget(self.skip_button)
 
+        # Add actions frame with minimal margin
         right_layout.addWidget(actions_frame)
-        right_layout.addStretch()
+        
+        # Use large stretch factor to push filters section to take more space
+        right_layout.addStretch(10)
 
         # Center panel (PDF Viewer)
         center_panel = QWidget()
@@ -296,7 +304,8 @@ class ProcessingTab(QWidget):
 
             # Add label
             label = QLabel(column)
-            label.setStyleSheet("font-weight: bold;")
+            label.setStyleSheet("font-weight: bold; font-size: 9pt; margin: 0; padding: 0;")
+            label.setFixedHeight(16)  # Reduce label height
             layout.addWidget(label)
 
             # Create fuzzy search
@@ -312,7 +321,7 @@ class ProcessingTab(QWidget):
             fuzzy.text_changed.connect(self._update_process_button)
 
             # Set tighter layout for fuzzy search frame
-            fuzzy.setContentsMargins(2, 2, 2, 2)
+            fuzzy.setContentsMargins(0, 0, 0, 0)  # Remove all margins
 
             # Allow the fuzzy search frame to expand to fill available space
             fuzzy.setSizePolicy(
@@ -322,9 +331,9 @@ class ProcessingTab(QWidget):
             layout.addWidget(fuzzy)
 
             # Set ultra-compact margins for the filter frame
-            frame.setContentsMargins(1, 1, 1, 1)
-            layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins
-            layout.setSpacing(2)  # Minimal spacing within filter
+            frame.setContentsMargins(0, 0, 0, 0)  # Remove all margins
+            layout.setContentsMargins(1, 1, 1, 1)  # Minimal margins
+            layout.setSpacing(1)  # Minimal spacing within filter
 
             # Add to main layout
             self.filters_layout.addWidget(frame)
