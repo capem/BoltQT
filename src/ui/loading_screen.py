@@ -5,7 +5,6 @@ import logging
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt6.QtCore import (
     Qt,
-    QTimer,
     QPropertyAnimation,
     QEasingCurve,
     QSize,
@@ -70,7 +69,7 @@ class EnhancedLoadingScreen(QWidget):
     COLOR_BG_TRANSLUCENT = QColor(248, 248, 248, 220)
 
     # Animation constants
-    FADE_IN_MS = 400
+    FADE_IN_MS = 300  # Faster fade-in for better visual experience
 
     # Performance optimization flags
     ENABLE_PERF_LOGGING = False  # Disabled by default for production
@@ -87,7 +86,9 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             super_time = time.time()
-            logger.debug(f"__init__ - super().__init__() took {(super_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"__init__ - super().__init__() took {(super_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = super_time
 
         # Window properties
@@ -96,9 +97,14 @@ class EnhancedLoadingScreen(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
+        # Set initial opacity higher so background is visible from start
+        self._splash_opacity = 0.8
+
         if ENABLE_PERF_LOGGING:
             window_time = time.time()
-            logger.debug(f"__init__ - window properties took {(window_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"__init__ - window properties took {(window_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = window_time
 
         # Initialize state
@@ -107,7 +113,8 @@ class EnhancedLoadingScreen(QWidget):
         self.progress_text = ""
         self._dots = 0
         self.angle = 0
-        self._splash_opacity = 0.0
+        # Start with higher opacity so background is visible immediately
+        self._splash_opacity = 0.9
         self._pulse_radius = 0
         self._pulse_opacity = 0.6
 
@@ -121,7 +128,9 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             state_time = time.time()
-            logger.debug(f"__init__ - state initialization took {(state_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"__init__ - state initialization took {(state_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = state_time
 
         # Initialize dimensions first
@@ -129,20 +138,24 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             dim_time = time.time()
-            logger.debug(f"__init__ - _calculate_dimensions() took {(dim_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"__init__ - _calculate_dimensions() took {(dim_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = dim_time
 
         # Initialize fonts without creating metrics yet
         self._percentage_font = QFont()
         self._percentage_font.setPointSize(int(self.message_font_size * 0.8))
-        
+
         # Initialize font metrics as None - will create on demand
         self._font_metrics = None
         self._text_height = None
 
         if ENABLE_PERF_LOGGING:
             font_time = time.time()
-            logger.debug(f"__init__ - font initialization took {(font_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"__init__ - font initialization took {(font_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = font_time
 
         # Initialize UI and animations
@@ -150,15 +163,21 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             ui_time = time.time()
-            logger.debug(f"__init__ - _setup_ui() took {(ui_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"__init__ - _setup_ui() took {(ui_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = ui_time
 
         self._setup_animations()
 
         if ENABLE_PERF_LOGGING:
             end_time = time.time()
-            logger.debug(f"__init__ - _setup_animations() took {(end_time - phase_start) * 1000:.2f}ms")
-            logger.debug(f"__init__ - total initialization took {(end_time - total_start) * 1000:.2f}ms")
+            logger.debug(
+                f"__init__ - _setup_animations() took {(end_time - phase_start) * 1000:.2f}ms"
+            )
+            logger.debug(
+                f"__init__ - total initialization took {(end_time - total_start) * 1000:.2f}ms"
+            )
 
     @log_performance
     def _calculate_dimensions(self) -> None:
@@ -176,7 +195,9 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             screen_time = time.time()
-            logger.debug(f"_calculate_dimensions - screen dimensions took {(screen_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_calculate_dimensions - screen dimensions took {(screen_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = screen_time
 
         # Core dimensions
@@ -191,12 +212,16 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             core_time = time.time()
-            logger.debug(f"_calculate_dimensions - core dimensions took {(core_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_calculate_dimensions - core dimensions took {(core_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = core_time
 
         # Container dimensions
         container_width = int(self.progress_ring_radius * 2 * golden_ratio * 2)
-        container_height = int(container_width / golden_ratio) + self.padding_vertical * 2
+        container_height = (
+            int(container_width / golden_ratio) + self.padding_vertical * 2
+        )
         self.container_width = max(container_width, 300)
         self.container_height = max(container_height, 200)
 
@@ -206,7 +231,9 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             container_time = time.time()
-            logger.debug(f"_calculate_dimensions - container calculations took {(container_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_calculate_dimensions - container calculations took {(container_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = container_time
 
         # Set widget size
@@ -214,14 +241,16 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             resize_time = time.time()
-            logger.debug(f"_calculate_dimensions - setFixedSize took {(resize_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_calculate_dimensions - setFixedSize took {(resize_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = resize_time
 
         # Progress bar dimensions
         self.progress_bar_height = int(self.base_unit)
         self.progress_bar_width = int(self.container_width * 0.75)
         self.progress_bar_radius = int(self.progress_bar_height / 2)
-        
+
         # Define vertical spacing for better element distribution
         self.title_margin_top = int(self.container_height * 0.15)
         self.progress_bar_margin_bottom = int(self.container_height * 0.25)
@@ -232,13 +261,14 @@ class EnhancedLoadingScreen(QWidget):
 
         # Logo dimensions
         self.logo_size = QSize(
-            int(self.progress_ring_radius * 0.8),
-            int(self.progress_ring_radius * 0.8)
+            int(self.progress_ring_radius * 0.8), int(self.progress_ring_radius * 0.8)
         )
 
         if ENABLE_PERF_LOGGING:
             other_time = time.time()
-            logger.debug(f"_calculate_dimensions - other calculations took {(other_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_calculate_dimensions - other calculations took {(other_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = other_time
 
         # Reset caches
@@ -248,8 +278,12 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             end_time = time.time()
-            logger.debug(f"_calculate_dimensions - cache reset took {(end_time - phase_start) * 1000:.2f}ms")
-            logger.debug(f"_calculate_dimensions - total time: {(end_time - total_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_calculate_dimensions - cache reset took {(end_time - phase_start) * 1000:.2f}ms"
+            )
+            logger.debug(
+                f"_calculate_dimensions - total time: {(end_time - total_start) * 1000:.2f}ms"
+            )
 
     def resizeEvent(self, event) -> None:
         """Handle resize event to recalculate cached values."""
@@ -281,7 +315,9 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             layout_time = time.time()
-            logger.debug(f"_setup_ui - layout creation took {(layout_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_setup_ui - layout creation took {(layout_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = layout_time
 
         # Create and setup labels
@@ -289,16 +325,22 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             labels_time = time.time()
-            logger.debug(f"_setup_ui - _create_labels took {(labels_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_setup_ui - _create_labels took {(labels_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = labels_time
-        
+
         # Set the layout margins to center content properly
         self.setLayout(main_layout)
 
         if ENABLE_PERF_LOGGING:
             end_time = time.time()
-            logger.debug(f"_setup_ui - setLayout took {(end_time - phase_start) * 1000:.2f}ms")
-            logger.debug(f"_setup_ui - total time: {(end_time - total_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_setup_ui - setLayout took {(end_time - phase_start) * 1000:.2f}ms"
+            )
+            logger.debug(
+                f"_setup_ui - total time: {(end_time - total_start) * 1000:.2f}ms"
+            )
 
     def _create_labels(self, layout) -> None:
         """Create and configure all text labels."""
@@ -318,7 +360,9 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             title_time = time.time()
-            logger.debug(f"_create_labels - title label creation took {(title_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_create_labels - title label creation took {(title_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = title_time
 
         # Spacer
@@ -335,8 +379,12 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             end_time = time.time()
-            logger.debug(f"_create_labels - progress label creation took {(end_time - phase_start) * 1000:.2f}ms")
-            logger.debug(f"_create_labels - total time: {(end_time - total_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_create_labels - progress label creation took {(end_time - phase_start) * 1000:.2f}ms"
+            )
+            logger.debug(
+                f"_create_labels - total time: {(end_time - total_start) * 1000:.2f}ms"
+            )
 
     @log_performance
     def _setup_animations(self) -> None:
@@ -345,19 +393,40 @@ class EnhancedLoadingScreen(QWidget):
             total_start = time.time()
             phase_start = total_start
 
-        # Spinner rotation timer
-        self.spinner_timer = QTimer(self)
-        self.spinner_timer.timeout.connect(self._update_spinner)
+        # Pre-calculate container and shadow bounds for faster first paint
+        if not self._center_point:
+            self._center_point = QPointF(self.rect().center())
 
-        if ENABLE_PERF_LOGGING:
-            timer_time = time.time()
-            logger.debug(f"_setup_animations - spinner timer setup took {(timer_time - phase_start) * 1000:.2f}ms")
-            phase_start = timer_time
+        if not self._container_rect:
+            self._container_rect = QRect(
+                int(self._center_point.x() - self.container_width / 2),
+                int(self._center_point.y() - self.container_height / 2),
+                self.container_width,
+                self.container_height,
+            )
 
-        # Create all animations
+        if not self._shadow_rect:
+            shadow_offset = 10
+            self._shadow_rect = QRect(
+                self._container_rect.x() - shadow_offset // 2,
+                self._container_rect.y() - shadow_offset // 2,
+                self._container_rect.width() + shadow_offset,
+                self._container_rect.height() + shadow_offset,
+            )
+
+        # Pre-create background gradient for faster first paint
+        if not self._cached_bg_gradient:
+            topLeft = QPointF(self._container_rect.topLeft())
+            bottomLeft = QPointF(self._container_rect.bottomLeft())
+            self._cached_bg_gradient = QLinearGradient(topLeft, bottomLeft)
+            self._cached_bg_gradient.setColorAt(0, self.COLOR_BG_LIGHT)
+            self._cached_bg_gradient.setColorAt(1, self.COLOR_BG_DARK)
+
+        # Just do a slight fade-in from the already visible state (0.9 to 1.0)
+        # This creates a subtle effect without making the user wait for the background
         self._create_animation(
             b"splash_opacity",
-            0.0,
+            0.9,
             1.0,
             self.FADE_IN_MS,
             easing=QEasingCurve.Type.OutCubic,
@@ -366,8 +435,12 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             end_time = time.time()
-            logger.debug(f"_setup_animations - fade animation setup took {(end_time - phase_start) * 1000:.2f}ms")
-            logger.debug(f"_setup_animations - total time: {(end_time - total_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_setup_animations - fade animation setup took {(end_time - phase_start) * 1000:.2f}ms"
+            )
+            logger.debug(
+                f"_setup_animations - total time: {(end_time - total_start) * 1000:.2f}ms"
+            )
 
     def _create_animation(
         self,
@@ -392,7 +465,9 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             setup_time = time.time()
-            logger.debug(f"_create_animation - animation setup took {(setup_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_create_animation - animation setup took {(setup_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = setup_time
 
         # Configure loop
@@ -404,13 +479,12 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             end_time = time.time()
-            logger.debug(f"_create_animation - animation start took {(end_time - phase_start) * 1000:.2f}ms")
-            logger.debug(f"_create_animation - total time: {(end_time - total_start) * 1000:.2f}ms")
-
-    def _update_spinner(self) -> None:
-        """Update spinner animation angle."""
-        self.angle = (self.angle + 3) % 360
-        self.update()
+            logger.debug(
+                f"_create_animation - animation start took {(end_time - phase_start) * 1000:.2f}ms"
+            )
+            logger.debug(
+                f"_create_animation - total time: {(end_time - total_start) * 1000:.2f}ms"
+            )
 
     # Property getters and setters for animations
     @pyqtProperty(float)
@@ -446,7 +520,9 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             init_time = time.time()
-            logger.debug(f"paintEvent - painter init took {(init_time - phase_start_time) * 1000:.2f}ms")
+            logger.debug(
+                f"paintEvent - painter init took {(init_time - phase_start_time) * 1000:.2f}ms"
+            )
             phase_start_time = init_time
 
         # Cache center point for multiple drawing operations
@@ -454,34 +530,44 @@ class EnhancedLoadingScreen(QWidget):
             self._center_point = QPointF(self.rect().center())
             if ENABLE_PERF_LOGGING:
                 center_time = time.time()
-                logger.debug(f"paintEvent - center point calculation took {(center_time - phase_start_time) * 1000:.2f}ms")
+                logger.debug(
+                    f"paintEvent - center point calculation took {(center_time - phase_start_time) * 1000:.2f}ms"
+                )
                 phase_start_time = center_time
 
         # Apply global opacity for fade-in effect
         painter.setOpacity(self._splash_opacity)
-        
+
         if ENABLE_PERF_LOGGING:
             bg_time = time.time()
-            logger.debug(f"paintEvent - opacity setup took {(bg_time - phase_start_time) * 1000:.2f}ms")
+            logger.debug(
+                f"paintEvent - opacity setup took {(bg_time - phase_start_time) * 1000:.2f}ms"
+            )
             phase_start_time = bg_time
 
         # Draw container
         self._draw_container(painter)
         if ENABLE_PERF_LOGGING:
             container_time = time.time()
-            logger.debug(f"paintEvent - container drawing took {(container_time - phase_start_time) * 1000:.2f}ms")
+            logger.debug(
+                f"paintEvent - container drawing took {(container_time - phase_start_time) * 1000:.2f}ms"
+            )
             phase_start_time = container_time
 
         # Draw progress bar
         self._draw_progress_bar(painter)
         if ENABLE_PERF_LOGGING:
             progress_time = time.time()
-            logger.debug(f"paintEvent - progress bar drawing took {(progress_time - phase_start_time) * 1000:.2f}ms")
+            logger.debug(
+                f"paintEvent - progress bar drawing took {(progress_time - phase_start_time) * 1000:.2f}ms"
+            )
             phase_start_time = progress_time
 
         if ENABLE_PERF_LOGGING:
             end_time = time.time()
-            logger.debug(f"paintEvent - total time: {(end_time - total_start_time) * 1000:.2f}ms")
+            logger.debug(
+                f"paintEvent - total time: {(end_time - total_start_time) * 1000:.2f}ms"
+            )
 
     def _draw_container(self, painter: QPainter) -> None:
         """Draw the container background with subtle shadow."""
@@ -494,7 +580,9 @@ class EnhancedLoadingScreen(QWidget):
             self._center_point = QPointF(self.width() / 2, self.height() / 2)
             if ENABLE_PERF_LOGGING:
                 center_time = time.time()
-                logger.debug(f"_draw_container - center point calculation took {(center_time - phase_start) * 1000:.2f}ms")
+                logger.debug(
+                    f"_draw_container - center point calculation took {(center_time - phase_start) * 1000:.2f}ms"
+                )
                 phase_start = center_time
 
         # Calculate container rect if not cached
@@ -507,7 +595,9 @@ class EnhancedLoadingScreen(QWidget):
             )
             if ENABLE_PERF_LOGGING:
                 rect_time = time.time()
-                logger.debug(f"_draw_container - container rect calculation took {(rect_time - phase_start) * 1000:.2f}ms")
+                logger.debug(
+                    f"_draw_container - container rect calculation took {(rect_time - phase_start) * 1000:.2f}ms"
+                )
                 phase_start = rect_time
 
         # Calculate shadow rect if not cached (slightly larger than container)
@@ -521,7 +611,9 @@ class EnhancedLoadingScreen(QWidget):
             )
             if ENABLE_PERF_LOGGING:
                 shadow_time = time.time()
-                logger.debug(f"_draw_container - shadow rect calculation took {(shadow_time - phase_start) * 1000:.2f}ms")
+                logger.debug(
+                    f"_draw_container - shadow rect calculation took {(shadow_time - phase_start) * 1000:.2f}ms"
+                )
                 phase_start = shadow_time
 
         # Draw shadow
@@ -531,7 +623,9 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             shadow_draw_time = time.time()
-            logger.debug(f"_draw_container - shadow drawing took {(shadow_draw_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_draw_container - shadow drawing took {(shadow_draw_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = shadow_draw_time
 
         # Draw container background
@@ -553,10 +647,16 @@ class EnhancedLoadingScreen(QWidget):
         if ENABLE_PERF_LOGGING:
             end_time = time.time()
             if gradient_created:
-                logger.debug(f"_draw_container - gradient creation and drawing took {(end_time - phase_start) * 1000:.2f}ms")
+                logger.debug(
+                    f"_draw_container - gradient creation and drawing took {(end_time - phase_start) * 1000:.2f}ms"
+                )
             else:
-                logger.debug(f"_draw_container - container drawing took {(end_time - phase_start) * 1000:.2f}ms")
-            logger.debug(f"_draw_container - total time: {(end_time - total_start) * 1000:.2f}ms")
+                logger.debug(
+                    f"_draw_container - container drawing took {(end_time - phase_start) * 1000:.2f}ms"
+                )
+            logger.debug(
+                f"_draw_container - total time: {(end_time - total_start) * 1000:.2f}ms"
+            )
 
     def _draw_pulse_circle(self, painter: QPainter) -> None:
         """Draw the pulsing background circle for visual engagement."""
@@ -599,14 +699,14 @@ class EnhancedLoadingScreen(QWidget):
         bar_width = self.progress_bar_width
         bar_height = self.progress_bar_height
         bar_left = (self.width() - bar_width) / 2
-        bar_top = (
-            self._container_rect.bottom() - self.progress_bar_margin_bottom
-        )
+        bar_top = self._container_rect.bottom() - self.progress_bar_margin_bottom
         progress_width = int(bar_width * (self.progress / 100))
 
         if ENABLE_PERF_LOGGING:
             calc_time = time.time()
-            logger.debug(f"_draw_progress_bar - calculations took {(calc_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_draw_progress_bar - calculations took {(calc_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = calc_time
 
         # Draw bar background (track)
@@ -623,7 +723,9 @@ class EnhancedLoadingScreen(QWidget):
 
         if ENABLE_PERF_LOGGING:
             track_time = time.time()
-            logger.debug(f"_draw_progress_bar - track drawing took {(track_time - phase_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_draw_progress_bar - track drawing took {(track_time - phase_start) * 1000:.2f}ms"
+            )
             phase_start = track_time
 
         # Draw progress bar if there is progress
@@ -640,7 +742,9 @@ class EnhancedLoadingScreen(QWidget):
 
                 if ENABLE_PERF_LOGGING:
                     gradient_time = time.time()
-                    logger.debug(f"_draw_progress_bar - gradient creation took {(gradient_time - phase_start) * 1000:.2f}ms")
+                    logger.debug(
+                        f"_draw_progress_bar - gradient creation took {(gradient_time - phase_start) * 1000:.2f}ms"
+                    )
                     phase_start = gradient_time
 
             painter.setBrush(self._cached_progress_gradient)
@@ -656,9 +760,13 @@ class EnhancedLoadingScreen(QWidget):
             if ENABLE_PERF_LOGGING:
                 progress_time = time.time()
                 if gradient_created:
-                    logger.debug(f"_draw_progress_bar - progress bar drawing with new gradient took {(progress_time - phase_start) * 1000:.2f}ms")
+                    logger.debug(
+                        f"_draw_progress_bar - progress bar drawing with new gradient took {(progress_time - phase_start) * 1000:.2f}ms"
+                    )
                 else:
-                    logger.debug(f"_draw_progress_bar - progress bar drawing with cached gradient took {(progress_time - phase_start) * 1000:.2f}ms")
+                    logger.debug(
+                        f"_draw_progress_bar - progress bar drawing with cached gradient took {(progress_time - phase_start) * 1000:.2f}ms"
+                    )
                 phase_start = progress_time
 
         # Draw progress text with improved placement
@@ -666,12 +774,17 @@ class EnhancedLoadingScreen(QWidget):
             self._draw_percentage_text(painter, bar_left, bar_top)
             if ENABLE_PERF_LOGGING:
                 text_time = time.time()
-                logger.debug(f"_draw_progress_bar - text drawing took {(text_time - phase_start) * 1000:.2f}ms")
+                logger.debug(
+                    f"_draw_progress_bar - text drawing took {(text_time - phase_start) * 1000:.2f}ms"
+                )
                 phase_start = text_time
 
         if ENABLE_PERF_LOGGING:
             end_time = time.time()
-            logger.debug(f"_draw_progress_bar - total time: {(end_time - total_start) * 1000:.2f}ms")
+            logger.debug(
+                f"_draw_progress_bar - total time: {(end_time - total_start) * 1000:.2f}ms"
+            )
+
     def _draw_percentage_text(
         self, painter: QPainter, bar_left: float, bar_top: float
     ) -> None:
@@ -680,14 +793,16 @@ class EnhancedLoadingScreen(QWidget):
         if self._font_metrics is None:
             if ENABLE_PERF_LOGGING:
                 metrics_start = time.time()
-            
+
             # Create font metrics only when needed
             self._font_metrics = QFontMetrics(self._percentage_font)
             self._text_height = self._font_metrics.height()
 
             if ENABLE_PERF_LOGGING:
                 metrics_time = time.time()
-                logger.debug(f"_draw_percentage_text - font metrics initialization took {(metrics_time - metrics_start) * 1000:.2f}ms")
+                logger.debug(
+                    f"_draw_percentage_text - font metrics initialization took {(metrics_time - metrics_start) * 1000:.2f}ms"
+                )
 
         painter.setPen(QColor(50, 50, 50, 200))
         painter.setFont(self._percentage_font)
@@ -697,13 +812,15 @@ class EnhancedLoadingScreen(QWidget):
 
         # Position text in the center of the bar
         text_x = bar_left + (self.progress_bar_width - text_width) / 2
-        
+
         # Leave some space between the bar and text
         text_y = bar_top + self.progress_bar_height + self._text_height + 5
-        
+
         # Ensure text stays within container bounds
         container_bottom = self._container_rect.bottom()
         if text_y + self._text_height > container_bottom:
-            text_y = bar_top - self._text_height - 5  # Move text above the bar if no space below
-        
+            text_y = (
+                bar_top - self._text_height - 5
+            )  # Move text above the bar if no space below
+
         painter.drawText(QPointF(text_x, text_y), percentage_text)

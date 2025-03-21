@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QMessageBox,
 )
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, QThread, pyqtSignal
 
 from src.ui.config_tab import ConfigTab
 from src.ui.processing_tab import ProcessingTab
@@ -35,25 +35,25 @@ class MainWindow(QMainWindow):
         self.loading_screen = loading_screen
         self.app = app  # Store app reference
 
-        # Initialize managers
-        self.loading_screen.set_progress(25, "Initializing configuration manager...")
-        self.app.processEvents()  # Process events to update UI
-        self.config_manager = ConfigManager()
+        # These will be initialized later by the thread
+        self.config_manager = None
+        self.excel_manager = None
+        self.pdf_manager = None
 
-        self.loading_screen.set_progress(35, "Initializing Excel manager...")
-        self.app.processEvents()  # Process events to update UI
-        self.excel_manager = ExcelManager()
+        # Create initialization thread
+        self.init_thread = InitializationThread()
+        self.init_thread.progress_signal.connect(self.update_loading_progress)
+        self.init_thread.finished_signal.connect(self.on_init_complete)
+        self.init_thread.error_signal.connect(self.on_init_error)
 
-        self.loading_screen.set_progress(45, "Initializing PDF manager...")
-        self.app.processEvents()  # Process events to update UI
-        self.pdf_manager = PDFManager()
+        # Start the initialization thread
+        self.init_thread.start()
 
-        # Set window properties
-        self.loading_screen.set_progress(50, "Setting up main window...")
-        self.app.processEvents()  # Process events to update UI
+        # Set window properties immediately (doesn't need to wait for managers)
+        self.loading_screen.set_progress(20, "Setting up main window...")
         self.setMinimumSize(1200, 800)
 
-        # Create central widget and layout
+        # Create central widget and layout immediately
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
@@ -68,62 +68,122 @@ class MainWindow(QMainWindow):
         # Create status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready")
+        self.status_bar.showMessage("Initializing...")
 
-        # Error and status handlers
-        def handle_error(error: Exception, context: str) -> None:
-            from src.ui.error_dialog import show_error
+        # Set up widget debugging shortcut
+        setup_global_debug_shortcut(self)
 
-            # Log the error regardless
-            print(f"ERROR: {context}: {str(error)}")
+    def handle_error(self, error: Exception, context: str) -> None:
+        """Handle errors in the application."""
+        from src.ui.error_dialog import show_error
 
-            # For certain errors like OSError accessing network files,
-            # we want to avoid blocking the application
-            if isinstance(error, OSError) and (
-                "//192.168.0.77" in str(error) or "\\\\192.168.0.77" in str(error)
-            ):
-                # Update status bar without showing dialog
-                self.status_bar.showMessage(
-                    f"Error accessing network file: {str(error)}"
-                )
-                return
+        # Log the error regardless
+        print(f"ERROR: {context}: {str(error)}")
 
-            # For other errors, show the error dialog
-            show_error(self, context, error)
+        # For certain errors like OSError accessing network files,
+        # we want to avoid blocking the application
+        if isinstance(error, OSError) and (
+            "//192.168.0.77" in str(error) or "\\\\192.168.0.77" in str(error)
+        ):
+            # Update status bar without showing dialog
+            self.status_bar.showMessage(f"Error accessing network file: {str(error)}")
+            return
 
-        def handle_status(message: str) -> None:
-            self.status_bar.showMessage(message)
+        # For other errors, show the error dialog
+        show_error(self, context, error)
 
-        # Create tabs
+    def handle_status(self, message: str) -> None:
+        """Update status bar with message."""
+        self.status_bar.showMessage(message)
+
+    def update_loading_progress(self, progress: int, message: str) -> None:
+        """Update loading screen with progress from the initialization thread."""
+        self.loading_screen.set_progress(progress, message)
+
+    def on_init_complete(self, config_manager, excel_manager, pdf_manager) -> None:
+        """Handle completion of the initialization thread."""
+        # Store the initialized managers
+        self.config_manager = config_manager
+        self.excel_manager = excel_manager
+        self.pdf_manager = pdf_manager
+
+        # Now that we have managers, we can create the tabs
         self.loading_screen.set_progress(60, "Creating configuration tab...")
-        self.app.processEvents()  # Process events to update UI
         self.config_tab = ConfigTab(
-            self.config_manager, self.excel_manager, handle_error, handle_status
+            self.config_manager,
+            self.excel_manager,
+            self.handle_error,
+            self.handle_status,
         )
 
         self.loading_screen.set_progress(75, "Creating processing tab...")
-        self.app.processEvents()  # Process events to update UI
         self.processing_tab = ProcessingTab(
             self.config_manager,
             self.excel_manager,
             self.pdf_manager,
-            handle_error,
-            handle_status,
+            self.handle_error,
+            self.handle_status,
         )
 
         # Add tabs
         self.loading_screen.set_progress(85, "Finalizing UI setup...")
-        self.app.processEvents()  # Process events to update UI
         self.tab_widget.addTab(self.processing_tab, "Processing")
         self.tab_widget.addTab(self.config_tab, "Configuration")
-        
-        # Set up widget debugging shortcut
-        setup_global_debug_shortcut(self)
 
-        # Hide loading screen after a short delay
+        # Update status bar
+        self.status_bar.showMessage("Ready")
+
+        # Show the main window now that initialization is complete
+        self.loading_screen.set_progress(95, "Showing main window...")
+        self.showMaximized()  # Open the window maximized
+        self.activateWindow()  # Make sure the window takes focus
+        self.raise_()  # Bring window to front
+
+        # Hide loading screen after a short delay to ensure smooth transition
         self.loading_screen.set_progress(100, "Ready!")
-        self.app.processEvents()  # Process events to update UI
-        QTimer.singleShot(500, self.loading_screen.hide)
+        QTimer.singleShot(800, self.loading_screen.hide)
+
+    def on_init_error(self, error: Exception) -> None:
+        """Handle errors from the initialization thread."""
+        from src.ui.error_dialog import show_error
+
+        show_error(self, "Initialization Error", error)
+        self.loading_screen.set_progress(100, "Error during initialization!")
+        QTimer.singleShot(2000, self.loading_screen.hide)
+
+
+class InitializationThread(QThread):
+    """Thread for handling heavy initialization tasks without blocking the UI thread."""
+
+    # Signals for progress reporting and completion
+    progress_signal = pyqtSignal(int, str)
+    finished_signal = pyqtSignal(
+        object, object, object
+    )  # ConfigManager, ExcelManager, PDFManager
+    error_signal = pyqtSignal(Exception)
+
+    def __init__(self):
+        super().__init__()
+
+    def run(self):
+        try:
+            # Initialize managers in the background thread
+            self.progress_signal.emit(25, "Initializing configuration manager...")
+            config_manager = ConfigManager()
+
+            self.progress_signal.emit(35, "Initializing Excel manager...")
+            excel_manager = ExcelManager()
+
+            self.progress_signal.emit(45, "Initializing PDF manager...")
+            pdf_manager = PDFManager()
+
+            # Signal that initialization is complete and pass the managers back
+            self.progress_signal.emit(50, "Initialization complete!")
+            self.finished_signal.emit(config_manager, excel_manager, pdf_manager)
+
+        except Exception as e:
+            # Signal if there's an error during initialization
+            self.error_signal.emit(e)
 
 
 def main() -> int:
@@ -146,8 +206,7 @@ def main() -> int:
 
     try:
         # Initialize main window with loading screen
-        loading_screen.set_progress(20, "Creating main window...")
-        app.processEvents()  # Process events to update UI
+        loading_screen.set_progress(15, "Creating main window...")
         main_window = MainWindow(loading_screen, app)  # Pass app instance here
         main_window.setWindowTitle(app_name)  # Use same app name for consistency
 
@@ -157,12 +216,8 @@ def main() -> int:
         y = (screen_geometry.height() - main_window.height()) // 2
         main_window.move(x, y)
 
-        # Show main window and enter Qt's event loop
-        loading_screen.set_progress(90, "Ready to launch...")
-        app.processEvents()  # Process events to update UI
-        main_window.showMaximized()  # Open the window maximized
-        main_window.activateWindow()  # Make sure the window takes focus
-        main_window.raise_()  # Bring window to front
+        # Don't show the main window yet - it will be shown when initialization completes
+        # The loading screen will be visible during the entire initialization process
 
         # Return code from app execution
         return app.exec()
