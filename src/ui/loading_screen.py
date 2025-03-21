@@ -143,11 +143,11 @@ class EnhancedLoadingScreen(QWidget):
 
         # Container dimensions
         container_width = int(self.progress_ring_radius * 2 * golden_ratio * 2)
-        container_height = int(container_width / golden_ratio)
+        container_height = int(container_width / golden_ratio) + self.padding_vertical * 2  # Add padding to ensure enough vertical space
         self.container_width = max(container_width, 300)
         self.container_height = max(container_height, 200)
 
-        # Widget size
+        # Widget size - add more padding to ensure elements don't touch the edges
         self.setFixedSize(
             self.container_width + (self.padding_horizontal * 2),
             self.container_height + (self.padding_vertical * 2),
@@ -157,6 +157,10 @@ class EnhancedLoadingScreen(QWidget):
         self.progress_bar_height = int(self.base_unit)
         self.progress_bar_width = int(self.container_width * 0.75)
         self.progress_bar_radius = int(self.progress_bar_height / 2)
+        
+        # Define vertical spacing for better element distribution
+        self.title_margin_top = int(self.container_height * 0.15)  # Position title at 15% from top
+        self.progress_bar_margin_bottom = int(self.container_height * 0.25)  # Position progress bar at 25% from bottom
 
         # Pulse circle parameters
         self.pulse_max_radius = self.progress_ring_radius * 1.5
@@ -198,6 +202,9 @@ class EnhancedLoadingScreen(QWidget):
 
         # Create and setup labels
         self._create_labels(main_layout)
+        
+        # Set the layout margins to center content properly
+        self.setLayout(main_layout)
 
     def _create_labels(self, layout) -> None:
         """Create and configure all text labels."""
@@ -392,10 +399,14 @@ class EnhancedLoadingScreen(QWidget):
         """Draw a MacOS-style progress bar."""
         bar_width = self.progress_bar_width
         bar_height = self.progress_bar_height
+        
+        # Center the bar horizontally
         bar_left = (self.width() - bar_width) / 2
+        
+        # Position the bar with proper spacing from the bottom
         bar_top = (
-            self._container_rect.bottom() - bar_height - 30
-        )  # Reduced space from bottom
+            self._container_rect.bottom() - self.progress_bar_margin_bottom
+        )
 
         # Calculate the progress width
         progress_width = int(bar_width * (self.progress / 100))
@@ -448,6 +459,13 @@ class EnhancedLoadingScreen(QWidget):
 
         # Position text in the center of the bar
         text_x = bar_left + (self.progress_bar_width - text_width) / 2
-        text_y = bar_top + self.progress_bar_height + self._text_height
-
+        
+        # Leave some space between the bar and text
+        text_y = bar_top + self.progress_bar_height + self._text_height + 5
+        
+        # Ensure text stays within container bounds
+        container_bottom = self._container_rect.bottom()
+        if text_y + self._text_height > container_bottom:
+            text_y = bar_top - self._text_height - 5  # Move text above the bar if no space below
+            
         painter.drawText(QPointF(text_x, text_y), percentage_text)
