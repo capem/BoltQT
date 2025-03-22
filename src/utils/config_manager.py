@@ -23,6 +23,15 @@ class ConfigManager(QObject):
             "filter2_column": "",
             "filter3_column": "",
             "filter4_column": "",
+            "vision": {
+                "enabled": False,
+                "gemini_api_key": "",
+                "model": "gemini-2.0-flash",
+                "supplier_match_threshold": 0.75,
+                "auto_populate_fields": True,
+                "default_language": "fr",
+                "ocr_preprocessing": True
+            }
         }
         self._config_file = "config.json"
         self._change_callbacks: List[Callable] = []

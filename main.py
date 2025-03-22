@@ -20,6 +20,7 @@ from src.ui.mac_tab_widget import MacTabWidget
 from src.utils.config_manager import ConfigManager
 from src.utils.excel_manager import ExcelManager
 from src.utils.pdf_manager import PDFManager
+from src.utils.vision_manager import VisionManager
 from src.utils.widget_debugger import setup_global_debug_shortcut
 
 
@@ -39,6 +40,7 @@ class MainWindow(QMainWindow):
         self.config_manager = None
         self.excel_manager = None
         self.pdf_manager = None
+        self.vision_manager = None
 
         # Create initialization thread
         self.init_thread = InitializationThread()
@@ -100,12 +102,13 @@ class MainWindow(QMainWindow):
         """Update loading screen with progress from the initialization thread."""
         self.loading_screen.set_progress(progress, message)
 
-    def on_init_complete(self, config_manager, excel_manager, pdf_manager) -> None:
+    def on_init_complete(self, config_manager, excel_manager, pdf_manager, vision_manager) -> None:
         """Handle completion of the initialization thread."""
         # Store the initialized managers
         self.config_manager = config_manager
         self.excel_manager = excel_manager
         self.pdf_manager = pdf_manager
+        self.vision_manager = vision_manager
 
         # Now that we have managers, we can create the tabs
         self.loading_screen.set_progress(60, "Creating configuration tab...")
@@ -121,6 +124,7 @@ class MainWindow(QMainWindow):
             self.config_manager,
             self.excel_manager,
             self.pdf_manager,
+            self.vision_manager,  # Directly pass vision_manager as a separate dependency
             self.handle_error,
             self.handle_status,
         )
@@ -158,8 +162,8 @@ class InitializationThread(QThread):
     # Signals for progress reporting and completion
     progress_signal = pyqtSignal(int, str)
     finished_signal = pyqtSignal(
-        object, object, object
-    )  # ConfigManager, ExcelManager, PDFManager
+        object, object, object, object
+    )  # ConfigManager, ExcelManager, PDFManager, VisionManager
     error_signal = pyqtSignal(Exception)
 
     def __init__(self):
@@ -176,10 +180,13 @@ class InitializationThread(QThread):
 
             self.progress_signal.emit(45, "Initializing PDF manager...")
             pdf_manager = PDFManager()
+            
+            self.progress_signal.emit(48, "Initializing Vision manager...")
+            vision_manager = VisionManager(config_manager)
 
             # Signal that initialization is complete and pass the managers back
             self.progress_signal.emit(50, "Initialization complete!")
-            self.finished_signal.emit(config_manager, excel_manager, pdf_manager)
+            self.finished_signal.emit(config_manager, excel_manager, pdf_manager, vision_manager)
 
         except Exception as e:
             # Signal if there's an error during initialization

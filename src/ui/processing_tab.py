@@ -3,6 +3,7 @@ from typing import Optional, Any, Callable
 from datetime import datetime
 import time
 import os
+import json
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -17,13 +18,21 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 
 from ..utils import ConfigManager, ExcelManager, PDFManager, PDFTask
+from ..utils.vision_manager import VisionManager, FuzzyMatcher
 from ..utils.processing_thread import ProcessingThread
 from .fuzzy_search import FuzzySearchFrame
 from .queue_display import QueueDisplay
 from .pdf_viewer import PDFViewer
+
+
+# Create a signal relay object to safely pass signals from background threads to UI
+class SignalRelay(QObject):
+    """Signal relay for thread-safe communication."""
+
+    vision_result_ready = pyqtSignal(object, str)  # vision_result, pdf_path
 
 
 class ProcessingTab(QWidget):
@@ -41,6 +50,7 @@ class ProcessingTab(QWidget):
         config_manager: ConfigManager,
         excel_manager: ExcelManager,
         pdf_manager: PDFManager,
+        vision_manager: VisionManager,
         error_handler: Callable[[Exception, str], None],
         status_handler: Callable[[str], None],
     ) -> None:
@@ -51,8 +61,16 @@ class ProcessingTab(QWidget):
         self.config_manager = config_manager
         self.excel_manager = excel_manager
         self.pdf_manager = pdf_manager
+        self.vision_manager = vision_manager
         self._error_handler = error_handler
         self._update_status = status_handler
+
+        # Initialize signal relay for thread-safe communication
+        self.signal_relay = SignalRelay()
+        self.signal_relay.vision_result_ready.connect(self._on_vision_result_ready)
+
+        # Initialize fuzzy matcher
+        self._fuzzy_matcher = FuzzyMatcher(config_manager)
 
         # Initialize state
         self._pending_config_change_id = None
@@ -60,6 +78,7 @@ class ProcessingTab(QWidget):
         self.current_pdf: Optional[str] = None
         self.current_pdf_start_time: Optional[datetime] = None
         self.filter_frames = []
+        self._vision_mode = False  # Flag to indicate we're using vision results
 
         # Initialize processing thread with managers
         self.processing_thread = ProcessingThread(
@@ -96,7 +115,9 @@ class ProcessingTab(QWidget):
         if title:
             # Create header layout to contain the title
             header_layout = QHBoxLayout()
-            header_layout.setContentsMargins(0, 0, 0, 2)  # Minimal bottom margin for compact headings
+            header_layout.setContentsMargins(
+                0, 0, 0, 2
+            )  # Minimal bottom margin for compact headings
 
             # Create section title label with Mac-style font
             label = QLabel(title)
@@ -163,12 +184,16 @@ class ProcessingTab(QWidget):
         # Actions section (compact)
         actions_frame, actions_layout = self._create_section_frame("Actions")
         actions_layout.setSpacing(4)  # Further reduced spacing for more compact actions
-        actions_frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)  # Prevent vertical expansion
+        actions_frame.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )  # Prevent vertical expansion
 
         # Process button
         # Set up process button with fixed vertical size policy for compactness
         self.process_button = QPushButton("Process File")
-        self.process_button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.process_button.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
         self.process_button.clicked.connect(self._process_current_file)
         self.process_button.setEnabled(False)
         # Make the process button the default button so it responds to Enter key press
@@ -196,12 +221,36 @@ class ProcessingTab(QWidget):
         self.skip_button = QPushButton("Skip File")
         self.skip_button.clicked.connect(lambda: self._load_next_pdf(skip=True))
         self.skip_button.setStyleSheet("min-height: 22px; padding: 2px 8px;")
-        self.skip_button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.skip_button.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
         actions_layout.addWidget(self.skip_button)
+
+        # Vision button - For manual vision processing
+        self.vision_button = QPushButton("Apply Vision")
+        self.vision_button.clicked.connect(self._manual_vision_processing)
+        self.vision_button.setStyleSheet("min-height: 22px; padding: 2px 8px;")
+        self.vision_button.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        actions_layout.addWidget(self.vision_button)
+
+        # Set initial vision button enabled state based on config
+        config = self.config_manager.get_config()
+        vision_enabled = config.get("vision", {}).get("enabled", False)
+        self.vision_button.setEnabled(vision_enabled)
+        if not vision_enabled:
+            self.vision_button.setToolTip(
+                "Vision processing is disabled in configuration"
+            )
+        else:
+            self.vision_button.setToolTip(
+                "Manually run vision processing on current PDF"
+            )
 
         # Add actions frame with minimal margin
         right_layout.addWidget(actions_frame)
-        
+
         # Use large stretch factor to push filters section to take more space
         right_layout.addStretch(10)
 
@@ -244,7 +293,9 @@ class ProcessingTab(QWidget):
             }
         """)
         self.file_info_label.setWordWrap(True)
-        self.file_info_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self.file_info_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+        )
         # Enable text elision for the label
         self.file_info_label.setTextFormat(Qt.TextFormat.PlainText)
         self.file_info_label.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -304,7 +355,9 @@ class ProcessingTab(QWidget):
 
             # Add label
             label = QLabel(column)
-            label.setStyleSheet("font-weight: bold; font-size: 9pt; margin: 0; padding: 0;")
+            label.setStyleSheet(
+                "font-weight: bold; font-size: 9pt; margin: 0; padding: 0;"
+            )
             label.setFixedHeight(16)  # Reduce label height
             layout.addWidget(label)
 
@@ -398,6 +451,13 @@ class ProcessingTab(QWidget):
             if not (config["excel_file"] and config["excel_sheet"]):
                 return
 
+            # If in vision mode, don't reload filter values to avoid clearing vision-populated fields
+            if self._vision_mode and filter_index > 0:
+                print(
+                    f"[DEBUG] Skipping filter values reload for filter {filter_index + 1} in vision mode"
+                )
+                return
+
             # Load Excel data if needed
             if self.excel_manager.excel_data is None:
                 try:
@@ -459,14 +519,19 @@ class ProcessingTab(QWidget):
                     )
                 # For filter3 and beyond, check row_idx
                 if i > 1:
-                    # Clear and return if no valid row_idx from filter2
+                    # Clear and return if no valid row_idx from filter2 (unless in vision mode)
                     if row_idx < 0 or row_idx not in filtered_df.index:
-                        print(
-                            f"[DEBUG] No valid row_idx for filter {i + 1}, clearing all subsequent filters"
-                        )
-                        for idx in range(i, len(self.filter_frames)):
-                            self.filter_frames[idx]["fuzzy"].clear()
-                        return
+                        if self._vision_mode:
+                            print(
+                                f"[DEBUG] Invalid row_idx {row_idx} for filter {i + 1}, but continuing in vision mode"
+                            )
+                        else:
+                            print(
+                                f"[DEBUG] No valid row_idx for filter {i + 1}, clearing all subsequent filters"
+                            )
+                            for idx in range(i, len(self.filter_frames)):
+                                self.filter_frames[idx]["fuzzy"].clear()
+                            return
                     else:
                         filtered_df = filtered_df.loc[[row_idx]]
                         print(f"[DEBUG] Applied row_idx filter: {row_idx}")
@@ -504,7 +569,7 @@ class ProcessingTab(QWidget):
                 formatted_values.sort()
                 values = formatted_values
             else:
-                # For filter3 and beyond, must have valid row_idx from filter2
+                # For filter3 and beyond, must have valid row_idx from filter2 (unless in vision mode)
                 if filter_index > 1:
                     filter2_value = self.filter_frames[1]["fuzzy"].get()
                     if not filter2_value:
@@ -515,16 +580,22 @@ class ProcessingTab(QWidget):
 
                     _, row_idx = self._parse_filter2_value(filter2_value)
                     if row_idx < 0 or row_idx not in filtered_df.index:
-                        print(
-                            f"[DEBUG] No valid row_idx from filter2, keeping filter {filter_index + 1} empty"
-                        )
-                        return
+                        if self._vision_mode:
+                            print(
+                                f"[DEBUG] Invalid row_idx from filter2, but continuing in vision mode for filter {filter_index + 1}"
+                            )
+                        else:
+                            print(
+                                f"[DEBUG] No valid row_idx from filter2, keeping filter {filter_index + 1} empty"
+                            )
+                            return
 
                     # Use only the specific row for valid row_idx
-                    filtered_df = filtered_df.loc[[row_idx]]
-                    print(
-                        f"[DEBUG] Using row_idx {row_idx} for filter {filter_index + 1}"
-                    )
+                    if row_idx >= 0 and row_idx in filtered_df.index:
+                        filtered_df = filtered_df.loc[[row_idx]]
+                        print(
+                            f"[DEBUG] Using row_idx {row_idx} for filter {filter_index + 1}"
+                        )
 
                 # Get unique values from filtered data
                 values = sorted(filtered_df[column].astype(str).unique().tolist())
@@ -631,7 +702,12 @@ class ProcessingTab(QWidget):
         return "break"
 
     def _process_current_file(self) -> None:
-        """Process the current file."""
+        """Process the current file with the selected filter values.
+
+        This is the main PDF processing task, separate from vision preprocessing.
+        Vision preprocessing may have happened earlier to populate the filters,
+        but this is the actual processing task that will be tracked in the queue.
+        """
         if not self.current_pdf:
             self._update_status("No file selected")
             return
@@ -665,7 +741,7 @@ class ProcessingTab(QWidget):
         # Clear the PDF from the viewer to release file handles
         self.pdf_viewer.clear_pdf()
 
-        # Create task
+        # Create PDF processing task (not to be confused with vision preprocessing)
         task = PDFTask(
             pdf_path=current_pdf_path,
             filter_values=filter_values,
@@ -685,7 +761,7 @@ class ProcessingTab(QWidget):
         self.processing_thread.tasks[task.task_id] = task
 
         print(
-            f"[DEBUG] Added task {task.task_id} to queue with filter values: {filter_values}"
+            f"[DEBUG] Added PDF processing task {task.task_id} to queue with filter values: {filter_values}"
         )
 
         # Reset all fuzzy search inputs
@@ -761,7 +837,11 @@ class ProcessingTab(QWidget):
             self.file_info_label.setToolTip("")
 
     def _load_next_pdf(self, skip: bool = False) -> None:
-        """Load the next PDF file with improved file handle management."""
+        """Load the next PDF file and optionally start vision preprocessing.
+
+        This handles file loading, cleanup, and initiates vision preprocessing
+        for filter auto-population, which is separate from the actual PDF processing.
+        """
         try:
             print(
                 f"[DEBUG] _load_next_pdf called with skip={skip}, current_pdf={self.current_pdf}"
@@ -814,7 +894,7 @@ class ProcessingTab(QWidget):
                 self._update_status("Source folder not configured")
                 return
 
-            # Get active tasks
+            # Get active tasks - only consider PDF processing tasks, not vision preprocessing
             active_tasks = {
                 k: v
                 for k, v in self.processing_thread.tasks.items()
@@ -858,6 +938,12 @@ class ProcessingTab(QWidget):
                     frame["fuzzy"].clear()
                 self._load_filter_values()
 
+                # Start vision preprocessing for auto-population, separate from PDF processing task
+                print(
+                    f"[DEBUG] Initiating vision preprocessing to auto-populate filters for {next_pdf}"
+                )
+                self._start_vision_processing(next_pdf)
+
                 # Focus first filter
                 if self.filter_frames:
                     self.filter_frames[0]["fuzzy"].entry.setFocus()
@@ -881,6 +967,251 @@ class ProcessingTab(QWidget):
             self.current_pdf = None
             self.current_pdf_start_time = None
             self.pdf_viewer.display_pdf(None)
+
+    def _start_vision_processing(self, pdf_path: str) -> None:
+        """Start vision processing for a PDF to enable auto-population of filters.
+
+        This is separate from the main PDF processing tasks and is only used
+        to help populate form fields before the actual PDF processing begins.
+        """
+        try:
+            # Check if vision processing is enabled
+            if not self.vision_manager.is_vision_enabled():
+                print("[DEBUG] Vision preprocessing is disabled in config")
+                return
+                
+            print(f"[DEBUG] Starting vision preprocessing for {pdf_path}")
+            
+            # Create background thread for vision preprocessing
+            from threading import Thread
+            
+            def process_vision():
+                try:
+                    # Use the vision manager directly to preprocess the PDF
+                    vision_result = self.vision_manager.preprocess_pdf(pdf_path)
+                    
+                    if vision_result:
+                        print(f"[DEBUG] Vision preprocessing completed for {pdf_path}")
+                        print(f"[DEBUG] Vision result: {json.dumps(list(vision_result.keys()), indent=2)}")
+                        
+                        # Emit signal to apply vision results in the main thread
+                        print("[DEBUG] Emitting vision_result_ready signal to main thread")
+                        self.signal_relay.vision_result_ready.emit(vision_result, pdf_path)
+                    else:
+                        print(f"[DEBUG] Vision preprocessing failed or is disabled for {pdf_path}")
+                        
+                except Exception as e:
+                    print(f"[DEBUG] Error in vision preprocessing thread: {str(e)}")
+                    import traceback
+                    print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+            
+            # Start background thread for vision preprocessing
+            vision_thread = Thread(target=process_vision)
+            vision_thread.daemon = True  # Make thread exit when main thread exits
+            vision_thread.start()
+            
+        except Exception as e:
+            print(f"[DEBUG] Error starting vision preprocessing: {str(e)}")
+            import traceback
+            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+
+    def _on_vision_result_ready(self, vision_result: dict, pdf_path: str) -> None:
+        """Handle vision results from background thread in the main thread.
+
+        This handles the auto-population of filters based on vision results,
+        separate from the actual PDF processing tasks.
+        """
+        try:
+            print(f"[DEBUG] Vision preprocessing result ready for {pdf_path}")
+
+            # Check if this is still the current PDF
+            if not self.current_pdf or not self.pdf_manager._paths_equal(
+                self.current_pdf, pdf_path
+            ):
+                print(
+                    f"[DEBUG] PDF has changed, not applying vision results (current: {self.current_pdf}, received: {pdf_path})"
+                )
+                return
+
+            # Apply the vision results to populate filters
+            self._apply_vision_result(vision_result)
+        except Exception as e:
+            print(f"[DEBUG] Error handling vision result: {str(e)}")
+            import traceback
+
+            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+
+    def _apply_vision_result(self, vision_result: dict) -> None:
+        """Apply vision preprocessing results to populate filter fields.
+
+        This method handles the auto-population of filter fields based on vision
+        preprocessing results. This is entirely separate from the actual PDF processing
+        task and happens before the user clicks 'Process File'.
+        """
+        try:
+            print("[DEBUG] Applying vision preprocessing results to filters")
+
+            if not vision_result:
+                print("[DEBUG] No vision preprocessing result to apply")
+                return
+
+            print(
+                f"[DEBUG] Vision preprocessing result keys: {list(vision_result.keys())}"
+            )
+
+            # Get config to check auto-populate setting
+            config = self.config_manager.get_config()
+            vision_config = config.get("vision", {})
+
+            if not vision_config.get("auto_populate_fields", True):
+                print("[DEBUG] Auto-populate is disabled in config")
+                return
+
+            # Enable vision mode to bypass row validation during filter population
+            # This is only for the filter population phase and not for actual processing
+            self._vision_mode = True
+            print(
+                "[DEBUG] Enabling vision mode to bypass row validation for filter population"
+            )
+
+            # Extract data from vision result
+            extracted_data = vision_result.get("extracted_data", {})
+            print(
+                f"[DEBUG] Extracted data from vision preprocessing: {json.dumps(extracted_data, indent=2)}"
+            )
+
+            # Clear all filters before setting new values
+            for frame in self.filter_frames:
+                frame["fuzzy"].clear()
+
+            # Set filter values based on vision results
+            if self.filter_frames:
+                # Filter 1 (Supplier)
+                supplier = vision_result.get("supplier_validation", {}).get(
+                    "best_match"
+                )
+                print(f"[DEBUG] Supplier from vision preprocessing: '{supplier}'")
+                if supplier and supplier.strip():
+                    print(f"[DEBUG] Setting filter 1 (Supplier) to: '{supplier}'")
+                    self.filter_frames[0]["fuzzy"].set(supplier)
+                    print(
+                        f"[DEBUG] After setting, filter 1 value is: '{self.filter_frames[0]['fuzzy'].get()}'"
+                    )
+                    # Don't trigger value_selected when in vision mode - we'll set all filters directly
+
+                    # Force update of filter values in UI
+                    QApplication.processEvents()
+
+                # Allow UI to update after setting first filter
+                QApplication.processEvents()
+
+                # Filter 2 (Invoice Number)
+                if len(self.filter_frames) > 1:
+                    invoice_num = extracted_data.get("invoice_number")
+                    print(
+                        f"[DEBUG] Invoice number from vision preprocessing: '{invoice_num}'"
+                    )
+                    if invoice_num and str(invoice_num).strip():
+                        # Get available invoice numbers for fuzzy matching
+                        available_values = self._get_available_filter_values(
+                            1
+                        )  # Index 1 for filter2
+                        print(
+                            f"[DEBUG] Available invoice values count: {len(available_values)}"
+                        )
+                        
+                        # Load invoice entries for fuzzy matching
+                        self._fuzzy_matcher.load_entries("invoice", available_values)
+                        
+                        # Try fuzzy matching with the invoice number
+                        invoice_num_str = str(invoice_num).strip()
+                        match_result = self._fuzzy_matcher.find_match(
+                            invoice_num_str, "invoice", threshold=0.8
+                        )
+                        
+                        # Set the value (either match or raw value)
+                        if match_result["match_found"]:
+                            exact_match = match_result["best_match"]
+                            print(
+                                f"[DEBUG] Found fuzzy match for invoice: '{exact_match}' with score {match_result['confidence']}"
+                            )
+                            self.filter_frames[1]["fuzzy"].set(exact_match)
+                        else:
+                            print(
+                                f"[DEBUG] No match found for invoice '{invoice_num_str}' in Excel"
+                            )
+                            print(
+                                f"[DEBUG] Setting filter 2 to raw value: '{invoice_num_str}'"
+                            )
+                            self.filter_frames[1]["fuzzy"].set(invoice_num_str)
+
+                        print(
+                            f"[DEBUG] After setting, filter 2 value is: '{self.filter_frames[1]['fuzzy'].get()}'"
+                        )
+                        # Don't trigger value_selected when in vision mode
+
+                        # Force update of filter values in UI
+                        QApplication.processEvents()
+
+                # Allow UI to update after setting second filter
+                QApplication.processEvents()
+
+                # Filter 3 (Date)
+                if len(self.filter_frames) > 2:
+                    date = extracted_data.get("invoice_date")
+                    print(f"[DEBUG] Date from vision preprocessing: '{date}'")
+                    if date and str(date).strip():
+                        print(f"[DEBUG] Setting filter 3 (Date) to: '{date}'")
+                        self.filter_frames[2]["fuzzy"].set(str(date))
+                        print(
+                            f"[DEBUG] After setting, filter 3 value is: '{self.filter_frames[2]['fuzzy'].get()}'"
+                        )
+                        # Don't trigger value_selected when in vision mode
+
+                        # Force update of filter values in UI
+                        QApplication.processEvents()
+
+                # Allow UI to update after setting third filter
+                QApplication.processEvents()
+
+                # Filter 4 (Amount)
+                if len(self.filter_frames) > 3:
+                    amount = extracted_data.get("total_amount")
+                    print(f"[DEBUG] Amount from vision preprocessing: '{amount}'")
+                    if amount and str(amount).strip():
+                        print(f"[DEBUG] Setting filter 4 (Amount) to: '{amount}'")
+                        self.filter_frames[3]["fuzzy"].set(str(amount))
+                        print(
+                            f"[DEBUG] After setting, filter 4 value is: '{self.filter_frames[3]['fuzzy'].get()}'"
+                        )
+
+                        # Force update of filter values in UI
+                        QApplication.processEvents()
+
+                # Update process button state
+                self._update_process_button()
+
+                print(
+                    "[DEBUG] Successfully applied vision preprocessing results to filters"
+                )
+            else:
+                print(
+                    "[DEBUG] No filter frames available to apply vision preprocessing results"
+                )
+
+            # Disable vision mode after applying all values - important to reset this flag
+            self._vision_mode = False
+            print("[DEBUG] Disabling vision mode after auto-population complete")
+
+        except Exception as e:
+            # Make sure to reset vision mode in case of error
+            self._vision_mode = False
+            print("[DEBUG] Disabling vision mode due to error")
+
+            print(f"[DEBUG] Error applying vision preprocessing results: {str(e)}")
+            import traceback
+
+            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
 
     def _update_process_button(self) -> None:
         """Update the state of the process button."""
@@ -909,7 +1240,11 @@ class ProcessingTab(QWidget):
                 task.error_msg = ""
 
     def _on_task_completed(self, task_id: str, status: str) -> None:
-        """Handle task completion."""
+        """Handle task completion for PDF processing tasks.
+
+        Note: This does NOT handle vision preprocessing, which is handled separately
+        through the vision result signal system.
+        """
         if task_id in self.processing_thread.tasks:
             task = self.processing_thread.tasks[task_id]
             task.status = status
@@ -917,7 +1252,7 @@ class ProcessingTab(QWidget):
 
             # If task is completed successfully, mark as processed but don't reload current PDF
             if status == "completed":
-                print(f"[DEBUG] Task completed successfully: {task_id}")
+                print(f"[DEBUG] PDF processing task completed successfully: {task_id}")
 
                 # Mark the source file as processed in our tracking system
                 # This ensures we won't pick it up again even if it's not deleted
@@ -981,6 +1316,20 @@ class ProcessingTab(QWidget):
     def _apply_config_change(self) -> None:
         """Apply configuration changes."""
         self._pending_config_change_id = None
+
+        # Update vision button enabled state
+        config = self.config_manager.get_config()
+        vision_enabled = config.get("vision", {}).get("enabled", False)
+        self.vision_button.setEnabled(vision_enabled)
+        if not vision_enabled:
+            self.vision_button.setToolTip(
+                "Vision processing is disabled in configuration"
+            )
+        else:
+            self.vision_button.setToolTip(
+                "Manually run vision processing on current PDF"
+            )
+
         self._setup_filters()
         self._load_next_pdf()
 
@@ -1037,3 +1386,41 @@ class ProcessingTab(QWidget):
 
         # Always update the status bar
         self._update_status(f"Error: {context}")
+
+    def _get_available_filter_values(self, filter_index):
+        """Get all available values for a specific filter."""
+        try:
+            # Make sure filter frames exist
+            if not self.filter_frames or filter_index >= len(self.filter_frames):
+                return []
+
+            # Get values from the filter's fuzzy search
+            fuzzy = self.filter_frames[filter_index]["fuzzy"]
+            values = fuzzy.all_values
+
+            print(
+                f"[DEBUG] Got {len(values)} available values for filter {filter_index + 1}"
+            )
+            return values
+        except Exception as e:
+            print(f"[DEBUG] Error getting available filter values: {str(e)}")
+            return []
+
+    def _manual_vision_processing(self) -> None:
+        """Manually trigger vision preprocessing to populate filters for the current PDF."""
+        if not self.current_pdf:
+            self._update_status("No file loaded")
+            return
+
+        try:
+            self._update_status("Running vision preprocessing...")
+
+            # Clear all filters before applying new vision results
+            self.filter_frames.clear()
+
+            # Start vision processing and wait for results
+            self._start_vision_processing(self.current_pdf)
+
+            self._update_status("Vision preprocessing started")
+        except Exception as e:
+            self._handle_error(e, "manual vision preprocessing")
