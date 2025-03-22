@@ -107,13 +107,6 @@ class QueueDisplay(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
 
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat("Batch Progress: %p%")
-        layout.addWidget(self.progress_bar)
-
         # Status counters
         self.counters = QWidget()
         counter_layout = QHBoxLayout(self.counters)
@@ -188,14 +181,11 @@ class QueueDisplay(QWidget):
         self.tasks = tasks
         self.model.update_tasks(tasks)
 
-        # Update progress and counters
+        # Update counters
         total = len(tasks)
         completed = sum(1 for t in tasks.values() if t.status == "completed")
         failed = sum(1 for t in tasks.values() if t.status == "failed")
         skipped = sum(1 for t in tasks.values() if t.status == "skipped")
-
-        progress = ((completed + skipped) / total * 100) if total > 0 else 0
-        self.progress_bar.setValue(int(progress))
 
         self.total_label.setText(f"Total: {total}")
         self.completed_label.setText(f"Completed: {completed}")

@@ -77,7 +77,9 @@ class ProcessingThread(QThread):
                 # Phase 3: Validate row data
                 if row_idx >= len(df):
                     # Reload Excel data if row index is out of bounds
-                    self._reload_excel_data(config)
+                    self.excel_manager.load_excel_data(config["excel_file"], config["excel_sheet"], force_reload=True)
+                    self._excel_data_cache["data"] = self.excel_manager.excel_data
+                    print("[DEBUG] Reloaded Excel data")
                     df = self._excel_data_cache["data"]
 
                     if row_idx >= len(df):
@@ -173,12 +175,6 @@ class ProcessingThread(QThread):
             raise Exception(
                 f"Missing required configuration: {', '.join(missing_configs)}"
             )
-
-    def _reload_excel_data(self, config: Dict[str, Any]) -> None:
-        """Reload Excel data and update the cache."""
-        self.excel_manager.load_excel_data(config["excel_file"], config["excel_sheet"])
-        self._excel_data_cache["data"] = self.excel_manager.excel_data
-        print("[DEBUG] Reloaded Excel data")
 
     def _ensure_excel_data_loaded(self, config: Dict[str, Any]) -> None:
         """Ensure Excel data is loaded, using cache if possible."""

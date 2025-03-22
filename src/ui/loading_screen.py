@@ -29,7 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger("LoadingScreen")
 
 # Performance settings
-ENABLE_PERF_LOGGING = True  # Set to True only for debugging
+ENABLE_PERF_LOGGING = False  # Set to True only for debugging
 
 
 def log_performance(func):
@@ -93,7 +93,7 @@ class EnhancedLoadingScreen(QWidget):
 
         # Window properties
         self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+            Qt.WindowType.FramelessWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 

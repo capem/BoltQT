@@ -35,9 +35,14 @@ class ExcelManager(QObject):
         print("[DEBUG] All caches cleared")
         self._last_sheet: Optional[str] = None
 
-    def load_excel_data(self, file_path: str, sheet_name: str) -> bool:
+    def load_excel_data(self, file_path: str, sheet_name: str, force_reload: bool = False) -> bool:
         """Load Excel data from file into DataFrame.
 
+        Args:
+            file_path: Path to the Excel file
+            sheet_name: Name of the sheet to load
+            force_reload: If True, will reload data even if it's already cached
+            
         Returns:
             bool: True if data was reloaded, False if using cached data
         """
@@ -47,10 +52,12 @@ class ExcelManager(QObject):
         try:
             # Check if we need to reload
             if (
-                self.excel_data is not None
+                not force_reload
+                and self.excel_data is not None
                 and self._last_file == file_path
                 and self._last_sheet == sheet_name
             ):
+                print(f"[DEBUG] Using cached Excel data (force_reload={force_reload})")
                 return False
 
             print(f"[DEBUG] Loading Excel data from {file_path}, sheet: {sheet_name}")
