@@ -64,7 +64,7 @@ class ProcessingTab(QWidget):
         self.vision_manager = vision_manager
         self._error_handler = error_handler
         self._update_status = status_handler
-
+        
         # Initialize signal relay for thread-safe communication
         self.signal_relay = SignalRelay()
         self.signal_relay.vision_result_ready.connect(self._on_vision_result_ready)
@@ -163,6 +163,9 @@ class ProcessingTab(QWidget):
         splitter.setHandleWidth(1)  # Thin handle for subtle appearance
         splitter.setChildrenCollapsible(False)  # Don't allow panels to collapse
         layout.addWidget(splitter)
+        
+        # Store reference to the main splitter
+        self.main_splitter = splitter
 
         # Left panel (Filters and Actions)
         right_panel = QWidget()
@@ -320,9 +323,11 @@ class ProcessingTab(QWidget):
         splitter.addWidget(center_panel)
         splitter.addWidget(right_panel)
 
-        # Set initial sizes (proportional)
-        splitter.setSizes([200, 600, 200])
-
+        # Set minimum widths to prevent panels from disappearing
+        left_panel.setMinimumWidth(150)
+        center_panel.setMinimumWidth(400)
+        right_panel.setMinimumWidth(150)
+        
         # Load initial data
         self._setup_filters()
         self._load_next_pdf()
@@ -331,6 +336,9 @@ class ProcessingTab(QWidget):
         self._update_timer = QTimer(self)
         self._update_timer.timeout.connect(self._update_display)
         self._update_timer.start(500)  # Update every 500ms
+        
+        # Set splitter sizes AFTER Qt has initialized the layout
+        QTimer.singleShot(0, lambda: splitter.setSizes([200, 600, 200]))
 
     def _setup_filters(self) -> None:
         """Setup filter controls based on configuration."""
