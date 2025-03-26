@@ -984,8 +984,8 @@ class ProcessingTab(QWidget):
         """
         try:
             # Check if vision processing is enabled
+            # Note: is_vision_enabled() will log the specific reason for being disabled
             if not self.vision_manager.is_vision_enabled():
-                print("[DEBUG] Vision preprocessing is disabled in config")
                 return
 
             print(f"[DEBUG] Starting vision preprocessing for {pdf_path}")

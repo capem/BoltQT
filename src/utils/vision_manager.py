@@ -35,8 +35,21 @@ class VisionManager:
     def _initialize_vision_service(self):
         """Initialize the vision parser service."""
         if self.config_manager:
-            self._vision_parser = VisionParserService(self.config_manager)
-            print("[DEBUG] Vision preprocessing service initialized")
+            # Check if API key exists before initializing
+            api_key = os.getenv("GEMINI_API_KEY")
+            
+            # If not in environment, try to get from config
+            if not api_key:
+                config = self.config_manager.get_config()
+                vision_config = config.get("vision", {})
+                api_key = vision_config.get("gemini_api_key")
+                
+            if api_key:
+                self._vision_parser = VisionParserService(self.config_manager)
+                print("[DEBUG] Vision preprocessing service initialized")
+            else:
+                self._vision_parser = None
+                print("[DEBUG] Vision preprocessing service not initialized - no API key available")
         else:
             print(
                 "[DEBUG] Cannot initialize vision service - no config manager provided"
@@ -53,7 +66,7 @@ class VisionManager:
             or None if preprocessing fails or is disabled
         """
         if not self.is_vision_enabled():
-            print("[DEBUG] Vision preprocessing is disabled in configuration")
+            # Log message already printed in is_vision_enabled()
             return None
 
         if not self._vision_parser:
@@ -86,14 +99,31 @@ class VisionManager:
         """Check if vision preprocessing is enabled in the configuration.
 
         Returns:
-            bool: True if vision preprocessing is enabled, False otherwise
+            bool: True if vision preprocessing is enabled AND a valid API key exists, False otherwise
         """
         if not self.config_manager:
             return False
 
+        # Check configuration
         config = self.config_manager.get_config()
         vision_config = config.get("vision", {})
-        return vision_config.get("enabled", False)
+        
+        # First check if enabled in config
+        if not vision_config.get("enabled", False):
+            print("[DEBUG] Vision preprocessing is disabled in configuration")
+            return False
+            
+        # Then check if API key exists in environment or config
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            api_key = vision_config.get("gemini_api_key")
+            
+        # Only return true if both enabled and API key exists
+        if not api_key:
+            print("[DEBUG] Vision preprocessing is disabled - no API key available")
+            return False
+            
+        return True
 
     def has_vision_service(self) -> bool:
         """Check if the vision service is available.
@@ -158,6 +188,11 @@ class VisionParserService:
         Raises:
             VisionParsingError: If preprocessing fails
         """
+        # Early check to ensure client is initialized
+        if not self.client:
+            print("[DEBUG] Vision preprocessing skipped - Gemini client not initialized")
+            raise VisionParsingError("Vision preprocessing unavailable - No API key")
+            
         try:
             print(f"[DEBUG] Starting vision preprocessing for document: {pdf_path}")
 
@@ -380,7 +415,7 @@ class VisionParserService:
                     config=generate_config,
                 ):
                     response_text += chunk.text
-                    print(f"[DEBUG] Received text chunk from API")
+                    print("[DEBUG] Received text chunk from API")
 
                 print(f"[DEBUG] Full API response: {response_text}")
 
