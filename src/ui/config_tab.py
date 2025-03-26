@@ -13,9 +13,10 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QFrame,
     QMessageBox,
+    QCheckBox,
+    QPlainTextEdit,
 )
 from PyQt6.QtCore import Qt
-import json
 import os
 from ..utils import ConfigManager
 from ..utils.excel_manager import ExcelManager
@@ -55,13 +56,18 @@ class ConfigTab(QWidget):
         container_layout.setSpacing(20)
         scroll.setWidget(container)
 
-        # Add configuration sections
+        # Add preset section at the top
+        self._add_preset_section(container_layout)
+        
+        # Add other configuration sections
         self._add_folder_section(container_layout)
         self._add_excel_section(container_layout)
         self._add_filter_section(container_layout)
         self._add_template_section(container_layout)
-        self._add_preset_section(container_layout)
-        self._add_save_section(container_layout)
+        self._add_vision_section(container_layout)
+        
+        # We removed the separate save section since saving will now be
+        # integrated with the preset section
 
         # Add stretch to bottom
         container_layout.addStretch()
@@ -70,7 +76,7 @@ class ConfigTab(QWidget):
         self._load_config()
 
         # Register for config changes
-        self.config_manager.config_changed.connect(self._on_config_change)
+        self.config_manager.config_changed.connect(self._load_config)
 
     def _create_section_frame(self, title: str) -> tuple[QFrame, QVBoxLayout]:
         """Create a styled frame for a configuration section."""
@@ -91,7 +97,9 @@ class ConfigTab(QWidget):
         if title:
             # Create header layout to contain the title
             header_layout = QHBoxLayout()
-            header_layout.setContentsMargins(0, 0, 0, 4)  # Reduced bottom margin for spacing
+            header_layout.setContentsMargins(
+                0, 0, 0, 4
+            )  # Reduced bottom margin for spacing
 
             # Create section title label with Mac-style font
             label = QLabel(title)
@@ -346,46 +354,30 @@ class ConfigTab(QWidget):
 
     def _add_preset_section(self, parent_layout: QVBoxLayout) -> None:
         """Add the preset configuration section."""
-        frame, layout = self._create_section_frame("Preset Configuration")
+        frame, layout = self._create_section_frame("Preset Management")
 
-        # Preset controls
-        preset_layout = QHBoxLayout()
-        layout.addLayout(preset_layout)
-
+        # Current preset display at the top
+        current_layout = QHBoxLayout()
+        layout.addLayout(current_layout)
+        
+        # Label for active preset
+        active_label = QLabel("<b>Active Preset:</b>")
+        active_label.setStyleSheet("font-size: 11pt;")
+        current_layout.addWidget(active_label)
+        
+        # Preset combo box
         self.preset_combo = QComboBox()
-        self.preset_combo.setMinimumWidth(200)
-        preset_layout.addWidget(QLabel("Preset:"))
-        preset_layout.addWidget(self.preset_combo)
-        preset_layout.addStretch()
-
-        # Preset buttons
-        button_layout = QHBoxLayout()
-        layout.addLayout(button_layout)
-
-        save_btn = QPushButton("Save Preset")
-        save_btn.clicked.connect(self._save_preset)
-        delete_btn = QPushButton("Delete Preset")
-        delete_btn.clicked.connect(self._delete_preset)
-        button_layout.addWidget(save_btn)
-        button_layout.addWidget(delete_btn)
-        button_layout.addStretch()
-
-        parent_layout.addWidget(frame)
-
-        # Load presets
-        self._load_presets()
-
-    def _add_save_section(self, parent_layout: QVBoxLayout) -> None:
-        """Add the save configuration section."""
-        frame, layout = self._create_section_frame("")
-
-        # Add save button
-        save_btn = QPushButton("Save Configuration")
-        save_btn.setStyleSheet("""
+        self.preset_combo.setMinimumWidth(300)
+        self.preset_combo.setToolTip("Select a preset to load")
+        current_layout.addWidget(self.preset_combo)
+        
+        # Save to current preset button (replaces the old Save Configuration)
+        save_current_btn = QPushButton("Save Preset")
+        save_current_btn.setStyleSheet("""
             QPushButton {
                 background-color: #4CAF50;
                 color: white;
-                padding: 8px 16px;
+                padding: 5px 10px;
                 border-radius: 4px;
                 font-weight: bold;
             }
@@ -393,10 +385,149 @@ class ConfigTab(QWidget):
                 background-color: #45a049;
             }
         """)
-        save_btn.clicked.connect(self._save_config)
-        layout.addWidget(save_btn)
+        save_current_btn.setToolTip("Save changes to the currently selected preset")
+        save_current_btn.clicked.connect(self._save_config)
+        current_layout.addWidget(save_current_btn)
+        
+        # Spacer
+        layout.addSpacing(10)
+        
+        # Preset management buttons
+        button_layout = QHBoxLayout()
+        layout.addLayout(button_layout)
+        
+        # Create new preset button (renamed from Save Preset)
+        save_new_btn = QPushButton("Save As New Preset")
+        save_new_btn.setToolTip("Save current configuration as a new preset")
+        save_new_btn.clicked.connect(self._save_as_new_preset)
+        
+        # Delete preset button
+        delete_btn = QPushButton("Delete Preset")
+        delete_btn.setToolTip("Delete the currently selected preset")
+        delete_btn.clicked.connect(self._delete_preset)
+        
+        # Add buttons to layout
+        button_layout.addWidget(save_new_btn)
+        button_layout.addWidget(delete_btn)
+        button_layout.addStretch()
+
+        # Add separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Plain)
+        separator.setStyleSheet("background-color: #e0e0e0; max-height: 1px; margin-top: 5px; margin-bottom: 5px;")
+        layout.addWidget(separator)
 
         parent_layout.addWidget(frame)
+
+        # Load configs
+        self._load_presets()
+
+    def _add_vision_section(self, parent_layout: QVBoxLayout) -> None:
+        """Add the vision configuration section."""
+        frame, layout = self._create_section_frame("Vision Configuration")
+
+        # Main vision settings
+        grid = QGridLayout()
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+
+        # Enabled checkbox
+        self.vision_enabled_checkbox = QCheckBox("Enable Vision Processing")
+        self.vision_enabled_checkbox.setToolTip(
+            "Enable automatic document recognition and field population"
+        )
+        grid.addWidget(self.vision_enabled_checkbox, 0, 0, 1, 2)
+
+        # Document type - new field as part of the preset
+        grid.addWidget(QLabel("Document Type:"), 1, 0)
+        self.document_type_entry = QLineEdit()
+        self.document_type_entry.setPlaceholderText(
+            "Document type (e.g. Invoice, Order, Receipt)"
+        )
+        self.document_type_entry.setToolTip(
+            "For reference only - identifies the document type this preset is for"
+        )
+        grid.addWidget(self.document_type_entry, 1, 1)
+
+        # API Key
+        grid.addWidget(QLabel("API Key:"), 2, 0)
+        self.vision_api_key_entry = QLineEdit()
+        self.vision_api_key_entry.setPlaceholderText("Enter Gemini API Key")
+        self.vision_api_key_entry.setEchoMode(QLineEdit.EchoMode.Password)
+        grid.addWidget(self.vision_api_key_entry, 2, 1)
+
+        # Model selection
+        grid.addWidget(QLabel("Model:"), 3, 0)
+        self.vision_model_combo = QComboBox()
+        self.vision_model_combo.addItems(
+            ["gemini-2.0-flash", "gemini-2.5-pro-exp-03-25"]
+        )
+        grid.addWidget(self.vision_model_combo, 3, 1)
+
+        # Auto-populate checkbox
+        self.vision_auto_populate_checkbox = QCheckBox("Auto-populate Fields")
+        self.vision_auto_populate_checkbox.setToolTip(
+            "Automatically populate filter fields using vision results"
+        )
+        grid.addWidget(self.vision_auto_populate_checkbox, 4, 0, 1, 2)
+
+        # Vision settings - condensed into main preset
+        preset_vision_frame = QFrame()
+        preset_vision_frame.setFrameStyle(
+            QFrame.Shape.StyledPanel | QFrame.Shadow.Plain
+        )
+        preset_vision_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f8f9fa;
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+            }
+        """)
+        preset_vision_layout = QVBoxLayout(preset_vision_frame)
+
+        # Header for document settings
+        doc_header_label = QLabel("Document Extraction Settings")
+        doc_header_label.setStyleSheet("font-weight: bold;")
+        preset_vision_layout.addWidget(doc_header_label)
+
+        # Prompt template
+        preset_vision_layout.addWidget(QLabel("Prompt Template:"))
+        self.vision_prompt_text = QPlainTextEdit()
+        self.vision_prompt_text.setMinimumHeight(150)
+        self.vision_prompt_text.setPlaceholderText(
+            "Enter prompt template for document extraction"
+        )
+        preset_vision_layout.addWidget(self.vision_prompt_text)
+
+        # Field mappings
+        preset_vision_layout.addWidget(QLabel("Field Mappings:"))
+        mappings_frame = QFrame()
+        mappings_layout = QGridLayout(mappings_frame)
+        mappings_layout.setColumnStretch(1, 1)
+
+        # Create field mapping entries
+        self.vision_field_mappings = []
+        for i in range(4):
+            field_label = QLabel(f"Filter {i + 1}:")
+            field_entry = QLineEdit()
+            field_entry.setPlaceholderText(f"Field name mapped to filter{i + 1}")
+
+            mappings_layout.addWidget(field_label, i, 0)
+            mappings_layout.addWidget(field_entry, i, 1)
+
+            self.vision_field_mappings.append(field_entry)
+
+        preset_vision_layout.addWidget(mappings_frame)
+
+        # Add preset vision frame to the main layout
+        layout.addWidget(preset_vision_frame)
+
+        # Add the frame to parent layout
+        parent_layout.addWidget(frame)
+
+    # This method has been removed as its functionality
+    # is now integrated into the preset section
 
     def _browse_folder(self, key: str) -> None:
         """Open folder browser dialog."""
@@ -409,197 +540,122 @@ class ConfigTab(QWidget):
             self._save_config()
 
     def _load_config(self) -> None:
-        """Load configuration values into UI."""
-        config = self.config_manager.get_config()
-
-        # Update entry fields
-        self.source_folder_entry.setText(config.get("source_folder", ""))
-        self.processed_folder_entry.setText(config.get("processed_folder", ""))
-        self.excel_file_entry.setText(config.get("excel_file", ""))
-        self.output_template_entry.setText(config.get("output_template", ""))
-
-        # Clear and disable combos initially
-        self.excel_sheet_combo.clear()
-        self.excel_sheet_combo.setEnabled(False)
-        for combo in self.filter_combos:
-            combo.clear()
-            combo.setEnabled(False)
-
-        # Load Excel file data if available
-        excel_file = config.get("excel_file", "")
-        if excel_file and os.path.exists(excel_file):
-            try:
-                # Clear caches to ensure fresh data
-                self.excel_manager.clear_caches()
-
-                # Load available sheets
-                sheets = self.excel_manager.get_available_sheets(excel_file)
-
-                # Update sheet combo
-                self.excel_sheet_combo.addItem("")
-                self.excel_sheet_combo.addItems(sheets)
-                self.excel_sheet_combo.setEnabled(True)
-
-                # Set selected sheet
-                sheet_name = config.get("excel_sheet", "")
-                if sheet_name in sheets:
-                    # Temporarily block signals to prevent triggering _on_sheet_changed
-                    self.excel_sheet_combo.blockSignals(True)
-                    self.excel_sheet_combo.setCurrentText(sheet_name)
-                    self.excel_sheet_combo.blockSignals(False)
-
-                    # Load column names
-                    try:
-                        columns = self.excel_manager.get_sheet_columns(
-                            excel_file, sheet_name
-                        )
-                        print(f"[DEBUG] Loaded columns: {columns}")
-
-                        # Define default columns based on common names
-                        default_columns = {
-                            1: ["FOURNISSEURS", "FRS", "SUPPLIER"],  # Supplier column
-                            2: ["FACTURES", "FA", "INVOICE"],  # Invoice column
-                            3: ["DATE FACTURE", "DATE", "DATE FA"],  # Date column
-                            4: ["MNT DH", "MNT", "MONTANT", "AMOUNT"],  # Amount column
-                        }
-
-                        # Update filter combos with columns and set values
-                        for i, combo in enumerate(self.filter_combos, 1):
-                            combo.blockSignals(True)
-                            try:
-                                combo.clear()
-                                combo.addItem("")  # Empty option first
-                                combo.addItems(columns)
-                                combo.setEnabled(True)
-
-                                # Try to set stored value first
-                                stored_value = config.get(f"filter{i}_column", "")
-                                print(
-                                    f"[DEBUG] Filter {i} stored value: {stored_value}"
-                                )
-
-                                if stored_value and stored_value in columns:
-                                    print(
-                                        f"[DEBUG] Setting filter {i} to stored value: '{stored_value}'"
-                                    )
-                                    combo.setCurrentText(stored_value)
-                                else:
-                                    # If no stored value or invalid, try default values
-                                    default_found = False
-                                    if i in default_columns and not stored_value:
-                                        for default_col in default_columns[i]:
-                                            if default_col in columns:
-                                                print(
-                                                    f"[DEBUG] Setting filter {i} to default value: '{default_col}'"
-                                                )
-                                                combo.setCurrentText(default_col)
-                                                default_found = True
-                                                break
-
-                                    if not default_found:
-                                        print(
-                                            f"[DEBUG] No matching value found for filter {i}"
-                                        )
-                                        combo.setCurrentIndex(0)
-                            finally:
-                                combo.blockSignals(False)
-
-                    except Exception as e:
-                        print(f"[DEBUG] Error updating filter combos: {str(e)}")
-                        self._handle_error(e, "updating filter values")
-
-            except Exception as e:
-                self._handle_error(e, "loading Excel configuration")
-
-    def _save_config(self) -> None:
-        """Save configuration values from UI."""
-        config = {
-            "source_folder": self.source_folder_entry.text(),
-            "processed_folder": self.processed_folder_entry.text(),
-            "excel_file": self.excel_file_entry.text(),
-            "excel_sheet": self.excel_sheet_combo.currentText(),
-            "output_template": self.output_template_entry.text(),
-        }
-
-        # Add filter columns
-        for i, combo in enumerate(self.filter_combos, 1):
-            config[f"filter{i}_column"] = combo.currentText()
-
-        self.config_manager.update_config(config)
-        self._update_status("Configuration saved successfully")
-
-    def _on_config_change(self) -> None:
-        """Handle configuration changes."""
-        self._load_config()
-
-    def _load_presets(self) -> None:
-        """Load presets from file."""
+        """Load configuration into UI elements."""
         try:
-            if os.path.exists("presets.json"):
-                with open("presets.json", "r", encoding="utf-8") as f:
-                    presets = json.load(f)
-
-                self.preset_combo.clear()
-                self.preset_combo.addItem("Select Preset...")
-                for name in presets:
-                    self.preset_combo.addItem(name)
-
-                self.preset_combo.currentIndexChanged.connect(self._load_preset)
-        except Exception as e:
-            self._handle_error(e, "loading presets")
-
-    def _save_preset(self) -> None:
-        """Save current configuration as a preset."""
-        preset_name, ok = QFileDialog.getSaveFileName(
-            self, "Save Preset", "", "Preset Files (*.json)"
-        )
-        if not ok or not preset_name:
-            return
-
-        try:
+            # Get current config
             config = self.config_manager.get_config()
 
-            # Load existing presets
-            presets = {}
-            if os.path.exists("presets.json"):
-                with open("presets.json", "r", encoding="utf-8") as f:
-                    presets = json.load(f)
+            # Update entry fields
+            self.source_folder_entry.setText(config.get("source_folder", ""))
+            self.processed_folder_entry.setText(config.get("processed_folder", ""))
 
-            # Add new preset
-            preset_name = os.path.splitext(os.path.basename(preset_name))[0]
-            presets[preset_name] = config
+            # Set excel file
+            excel_path = config.get("excel_file", "")
+            self.excel_file_entry.setText(excel_path)
 
-            # Save presets
-            with open("presets.json", "w", encoding="utf-8") as f:
-                json.dump(presets, f, indent=2)
+            # Block signals to avoid triggering unnecessary updates
+            self.excel_sheet_combo.blockSignals(True)
+            self.excel_sheet_combo.clear()
 
-            self._load_presets()
-            self._update_status(f"Saved preset: {preset_name}")
+            # Add sheet names
+            sheet_names = self.excel_manager.get_available_sheets(excel_path)
+            self.excel_sheet_combo.addItems(sheet_names)
+
+            # Set selected sheet
+            curr_sheet = config.get("excel_sheet", "")
+            self.excel_sheet_combo.setCurrentText(curr_sheet)
+
+            self.excel_sheet_combo.blockSignals(False)
+
+            columns = self.excel_manager.get_sheet_columns(excel_path, curr_sheet)
+            print(f"[DEBUG] Loaded columns: {columns}")
+
+            # Update filter combos with columns and set values
+            for i, combo in enumerate(self.filter_combos, 1):
+                combo.blockSignals(True)
+                try:
+                    combo.clear()
+                    combo.addItem("")  # Empty option first
+                    combo.addItems(columns)
+                    combo.setEnabled(True)
+
+                    # Try to set stored value first
+                    stored_value = config.get(f"filter{i}_column", "")
+                    print(f"[DEBUG] Filter {i} stored value: {stored_value}")
+
+                    print(
+                        f"[DEBUG] Setting filter {i} to stored value: '{stored_value}'"
+                    )
+                    combo.setCurrentText(stored_value)
+
+                finally:
+                    combo.blockSignals(False)
+
+            # Set template
+            self.output_template_entry.setText(config.get("output_template", ""))
+
+            # Load vision settings
+            vision_config = config.get("vision", {})
+            self.vision_enabled_checkbox.setChecked(vision_config.get("enabled", False))
+            self.vision_api_key_entry.setText(vision_config.get("gemini_api_key", ""))
+
+            # Set model if available
+            model = vision_config.get("model", "")
+            if model and self.vision_model_combo.findText(model) != -1:
+                self.vision_model_combo.setCurrentText(model)
+
+            # Document type
+            self.document_type_entry.setText(config.get("document_type", ""))
+
+            # Load prompt and field mappings
+            self.vision_prompt_text.setPlainText(config.get("prompt", ""))
+
+            # Update field mappings
+            field_mappings = config.get("field_mappings", {})
+            for i, entry in enumerate(self.vision_field_mappings):
+                filter_key = f"filter{i + 1}"
+                # Find mapping that points to this filter
+                mapping_value = ""
+                for field, target in field_mappings.items():
+                    if target == filter_key:
+                        mapping_value = field
+                        break
+
+                entry.setText(mapping_value)
 
         except Exception as e:
-            self._handle_error(e, "saving preset")
+            self._handle_error(e, "loading configuration")
 
-    def _delete_preset(self) -> None:
-        """Delete the selected preset."""
-        preset_name = self.preset_combo.currentText()
-        if preset_name == "Select Preset...":
-            return
-
+    def _load_presets(self) -> None:
+        """Load configs from config.json."""
         try:
-            if os.path.exists("presets.json"):
-                with open("presets.json", "r", encoding="utf-8") as f:
-                    presets = json.load(f)
+            # Get preset names from the config manager
+            preset_names = self.config_manager.get_preset_names()
+            current_preset = self.config_manager.get_current_preset_name()
 
-                if preset_name in presets:
-                    del presets[preset_name]
+            # Update the preset combo box
+            self.preset_combo.blockSignals(True)
+            self.preset_combo.clear()
+            self.preset_combo.addItem("Select Preset...")
 
-                    with open("presets.json", "w", encoding="utf-8") as f:
-                        json.dump(presets, f, indent=2)
+            for name in preset_names:
+                self.preset_combo.addItem(name)
 
-                    self._load_presets()
-                    self._update_status(f"Deleted preset: {preset_name}")
+            self.preset_combo.blockSignals(False)
+
+            # Select current preset if available
+            if current_preset and self.preset_combo.findText(current_preset) != -1:
+                self.preset_combo.setCurrentText(current_preset)
+
+            # Connect signal
+            try:
+                self.preset_combo.currentIndexChanged.disconnect()
+            except TypeError:
+                pass
+            self.preset_combo.currentIndexChanged.connect(self._load_preset)
+
         except Exception as e:
-            self._handle_error(e, "deleting preset")
+            self._handle_error(e, "loading configs")
 
     def _load_preset(self) -> None:
         """Load the selected preset."""
@@ -608,15 +664,122 @@ class ConfigTab(QWidget):
             return
 
         try:
-            if os.path.exists("presets.json"):
-                with open("presets.json", "r", encoding="utf-8") as f:
-                    presets = json.load(f)
+            # Load the preset using the config manager
+            self.config_manager.load_preset(preset_name)
 
-                if preset_name in presets:
-                    self.config_manager.update_config(presets[preset_name])
-                    self._update_status(f"Loaded preset: {preset_name}")
+            # Display status message
+            self._update_status(f"Loaded preset: {preset_name}")
+
         except Exception as e:
             self._handle_error(e, "loading preset")
+
+    def _save_as_new_preset(self) -> None:
+        """Save current configuration as a new preset."""
+        preset_name, ok = QFileDialog.getSaveFileName(
+            self, "Save As New Preset", "", "Preset Files (*.json)"
+        )
+        if not ok or not preset_name:
+            return
+
+        try:
+            # Extract base name without extension or path
+            preset_name = os.path.splitext(os.path.basename(preset_name))[0]
+            
+            # Add "Preset: " prefix if not already present
+            if not preset_name.startswith("Preset: "):
+                preset_name = f"Preset: {preset_name}"
+
+            # Save preset using the config manager
+            self.config_manager.save_preset(preset_name)
+
+            # Reload configs list
+            self._load_presets()
+            self._update_status(f"Saved as new preset: {preset_name}")
+
+        except Exception as e:
+            self._handle_error(e, "saving new preset")
+
+    def _delete_preset(self) -> None:
+        """Delete the selected preset."""
+        preset_name = self.preset_combo.currentText()
+        if preset_name == "Select Preset...":
+            return
+
+        try:
+            # Delete preset using the config manager
+            self.config_manager.delete_preset(preset_name)
+
+            # Reload configs list
+            self._load_presets()
+            self._update_status(f"Deleted preset: {preset_name}")
+
+        except Exception as e:
+            self._handle_error(e, "deleting preset")
+
+    def _save_config(self) -> None:
+        """Save configuration values to the currently selected preset."""
+        try:
+            current_preset = self.config_manager.get_current_preset_name()
+            
+            # Check if a preset is currently selected
+            if not current_preset:
+                # No preset selected, ask user to select or create one
+                QMessageBox.warning(
+                    self,
+                    "No Active Preset",
+                    "You need to select a preset first or create a new one.",
+                    QMessageBox.StandardButton.Ok
+                )
+                return
+                
+            # Create update object with form values
+            config = {
+                "source_folder": self.source_folder_entry.text(),
+                "processed_folder": self.processed_folder_entry.text(),
+                "excel_file": self.excel_file_entry.text(),
+                "excel_sheet": self.excel_sheet_combo.currentText(),
+                "output_template": self.output_template_entry.text(),
+                "document_type": self.document_type_entry.text(),  # Document type from UI
+            }
+
+            # Add filter columns
+            for i, combo in enumerate(self.filter_combos, 1):
+                config[f"filter{i}_column"] = combo.currentText()
+
+            # Get prompt text
+            config["prompt"] = self.vision_prompt_text.toPlainText()
+
+            # Get field mappings
+            field_mappings = {}
+            for i, entry in enumerate(self.vision_field_mappings):
+                field_name = entry.text().strip()
+                if field_name:
+                    field_mappings[field_name] = f"filter{i + 1}"
+
+            # Add field mappings
+            config["field_mappings"] = field_mappings
+
+            # Add vision settings
+            vision_config = self.config_manager.get_config().get("vision", {})
+            vision_config.update(
+                {
+                    "enabled": self.vision_enabled_checkbox.isChecked(),
+                    "gemini_api_key": self.vision_api_key_entry.text(),
+                    "model": self.vision_model_combo.currentText(),
+                }
+            )
+
+            # Update with vision config
+            config["vision"] = vision_config
+
+            # Update the configuration
+            self.config_manager.update_config(config)
+
+            # Show status message
+            self._update_status(f"Saved changes to preset: {current_preset}")
+
+        except Exception as e:
+            self._handle_error(e, "saving preset")
 
     def _show_warning(self, message: str) -> None:
         """Show a non-blocking warning to the user."""

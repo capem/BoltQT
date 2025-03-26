@@ -64,7 +64,7 @@ class ProcessingTab(QWidget):
         self.vision_manager = vision_manager
         self._error_handler = error_handler
         self._update_status = status_handler
-        
+
         # Initialize signal relay for thread-safe communication
         self.signal_relay = SignalRelay()
         self.signal_relay.vision_result_ready.connect(self._on_vision_result_ready)
@@ -163,7 +163,7 @@ class ProcessingTab(QWidget):
         splitter.setHandleWidth(1)  # Thin handle for subtle appearance
         splitter.setChildrenCollapsible(False)  # Don't allow panels to collapse
         layout.addWidget(splitter)
-        
+
         # Store reference to the main splitter
         self.main_splitter = splitter
 
@@ -327,7 +327,7 @@ class ProcessingTab(QWidget):
         left_panel.setMinimumWidth(150)
         center_panel.setMinimumWidth(400)
         right_panel.setMinimumWidth(150)
-        
+
         # Load initial data
         self._setup_filters()
         self._load_next_pdf()
@@ -336,7 +336,7 @@ class ProcessingTab(QWidget):
         self._update_timer = QTimer(self)
         self._update_timer.timeout.connect(self._update_display)
         self._update_timer.start(500)  # Update every 500ms
-        
+
         # Set splitter sizes AFTER Qt has initialized the layout
         QTimer.singleShot(0, lambda: splitter.setSizes([200, 600, 200]))
 
@@ -987,40 +987,50 @@ class ProcessingTab(QWidget):
             if not self.vision_manager.is_vision_enabled():
                 print("[DEBUG] Vision preprocessing is disabled in config")
                 return
-                
+
             print(f"[DEBUG] Starting vision preprocessing for {pdf_path}")
-            
+
             # Create background thread for vision preprocessing
             from threading import Thread
-            
+
             def process_vision():
                 try:
                     # Use the vision manager directly to preprocess the PDF
                     vision_result = self.vision_manager.preprocess_pdf(pdf_path)
-                    
+
                     if vision_result:
                         print(f"[DEBUG] Vision preprocessing completed for {pdf_path}")
-                        print(f"[DEBUG] Vision result: {json.dumps(list(vision_result.keys()), indent=2)}")
-                        
+                        print(
+                            f"[DEBUG] Vision result: {json.dumps(list(vision_result.keys()), indent=2)}"
+                        )
+
                         # Emit signal to apply vision results in the main thread
-                        print("[DEBUG] Emitting vision_result_ready signal to main thread")
-                        self.signal_relay.vision_result_ready.emit(vision_result, pdf_path)
+                        print(
+                            "[DEBUG] Emitting vision_result_ready signal to main thread"
+                        )
+                        self.signal_relay.vision_result_ready.emit(
+                            vision_result, pdf_path
+                        )
                     else:
-                        print(f"[DEBUG] Vision preprocessing failed or is disabled for {pdf_path}")
-                        
+                        print(
+                            f"[DEBUG] Vision preprocessing failed or is disabled for {pdf_path}"
+                        )
+
                 except Exception as e:
                     print(f"[DEBUG] Error in vision preprocessing thread: {str(e)}")
                     import traceback
+
                     print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
-            
+
             # Start background thread for vision preprocessing
             vision_thread = Thread(target=process_vision)
             vision_thread.daemon = True  # Make thread exit when main thread exits
             vision_thread.start()
-            
+
         except Exception as e:
             print(f"[DEBUG] Error starting vision preprocessing: {str(e)}")
             import traceback
+
             print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
 
     def _on_vision_result_ready(self, vision_result: dict, pdf_path: str) -> None:
@@ -1067,14 +1077,6 @@ class ProcessingTab(QWidget):
                 f"[DEBUG] Vision preprocessing result keys: {list(vision_result.keys())}"
             )
 
-            # Get config to check auto-populate setting
-            config = self.config_manager.get_config()
-            vision_config = config.get("vision", {})
-
-            if not vision_config.get("auto_populate_fields", True):
-                print("[DEBUG] Auto-populate is disabled in config")
-                return
-
             # Enable vision mode to bypass row validation during filter population
             # This is only for the filter population phase and not for actual processing
             self._vision_mode = True
@@ -1082,132 +1084,86 @@ class ProcessingTab(QWidget):
                 "[DEBUG] Enabling vision mode to bypass row validation for filter population"
             )
 
-            # Extract data from vision result
-            extracted_data = vision_result.get("extracted_data", {})
-            print(
-                f"[DEBUG] Extracted data from vision preprocessing: {json.dumps(extracted_data, indent=2)}"
-            )
+            # Use normalized data if available (new approach), otherwise fall back to extracted_data (backward compatibility)
+            normalized_data = vision_result.get("normalized_data", {})
+
 
             # Clear all filters before setting new values
             for frame in self.filter_frames:
                 frame["fuzzy"].clear()
 
-            # Set filter values based on vision results
-            if self.filter_frames:
-                # Filter 1 (Supplier)
-                supplier = vision_result.get("supplier_validation", {}).get(
-                    "best_match"
+            print(
+                f"[DEBUG] Using normalized data for filter population: {json.dumps(normalized_data, indent=2)}"
+            )
+
+            # Apply each filter value from normalized data
+            for filter_key, filter_value in normalized_data.items():
+                if not filter_value:
+                    # Skip empty values
+                    continue
+
+                # Convert filter1 to index 0, etc.
+                filter_index = int(filter_key.replace("filter", "")) - 1
+
+                # Check if we have this filter
+                if filter_index < 0 or filter_index >= len(self.filter_frames):
+                    print(f"[DEBUG] Filter index {filter_index} out of range, skipping")
+                    continue
+
+                print(
+                    f"[DEBUG] Setting {filter_key} (index {filter_index}) to '{filter_value}'"
                 )
-                print(f"[DEBUG] Supplier from vision preprocessing: '{supplier}'")
-                if supplier and supplier.strip():
-                    print(f"[DEBUG] Setting filter 1 (Supplier) to: '{supplier}'")
-                    self.filter_frames[0]["fuzzy"].set(supplier)
+
+                # For filter2, try to find a matching value with fuzzy search
+                if filter_index == 1:
+                    # Get available values for filter2
+                    available_values = self._get_available_filter_values(filter_index)
                     print(
-                        f"[DEBUG] After setting, filter 1 value is: '{self.filter_frames[0]['fuzzy'].get()}'"
+                        f"[DEBUG] Available values for filter2: {len(available_values)}"
                     )
-                    # Don't trigger value_selected when in vision mode - we'll set all filters directly
 
-                    # Force update of filter values in UI
-                    QApplication.processEvents()
-
-                # Allow UI to update after setting first filter
-                QApplication.processEvents()
-
-                # Filter 2 (Invoice Number)
-                if len(self.filter_frames) > 1:
-                    invoice_num = extracted_data.get("invoice_number")
-                    print(
-                        f"[DEBUG] Invoice number from vision preprocessing: '{invoice_num}'"
-                    )
-                    if invoice_num and str(invoice_num).strip():
-                        # Get available invoice numbers for fuzzy matching
-                        available_values = self._get_available_filter_values(
-                            1
-                        )  # Index 1 for filter2
-                        print(
-                            f"[DEBUG] Available invoice values count: {len(available_values)}"
-                        )
-                        
-                        # Load invoice entries for fuzzy matching
+                    if available_values:
+                        # Load entries for fuzzy matching
                         self._fuzzy_matcher.load_entries("invoice", available_values)
-                        
-                        # Try fuzzy matching with the invoice number
-                        invoice_num_str = str(invoice_num).strip()
+
+                        # Try fuzzy matching
+                        filter_value_str = str(filter_value).strip()
                         match_result = self._fuzzy_matcher.find_match(
-                            invoice_num_str, "invoice", threshold=0.8
+                            filter_value_str, "invoice", threshold=0.8
                         )
-                        
+
                         # Set the value (either match or raw value)
                         if match_result["match_found"]:
                             exact_match = match_result["best_match"]
                             print(
-                                f"[DEBUG] Found fuzzy match for invoice: '{exact_match}' with score {match_result['confidence']}"
+                                f"[DEBUG] Found fuzzy match for filter2: '{exact_match}' with score {match_result['confidence']}"
                             )
-                            self.filter_frames[1]["fuzzy"].set(exact_match)
+                            self.filter_frames[filter_index]["fuzzy"].set(exact_match)
                         else:
                             print(
-                                f"[DEBUG] No match found for invoice '{invoice_num_str}' in Excel"
+                                f"[DEBUG] No match found for filter2 '{filter_value_str}' in Excel"
                             )
-                            print(
-                                f"[DEBUG] Setting filter 2 to raw value: '{invoice_num_str}'"
+                            self.filter_frames[filter_index]["fuzzy"].set(
+                                filter_value_str
                             )
-                            self.filter_frames[1]["fuzzy"].set(invoice_num_str)
+                    else:
+                        # No available values, set directly
+                        self.filter_frames[filter_index]["fuzzy"].set(str(filter_value))
+                else:
+                    # For other filters, set value directly
+                    self.filter_frames[filter_index]["fuzzy"].set(str(filter_value))
 
-                        print(
-                            f"[DEBUG] After setting, filter 2 value is: '{self.filter_frames[1]['fuzzy'].get()}'"
-                        )
-                        # Don't trigger value_selected when in vision mode
-
-                        # Force update of filter values in UI
-                        QApplication.processEvents()
-
-                # Allow UI to update after setting second filter
+                # Update UI after each filter
                 QApplication.processEvents()
 
-                # Filter 3 (Date)
-                if len(self.filter_frames) > 2:
-                    date = extracted_data.get("invoice_date")
-                    print(f"[DEBUG] Date from vision preprocessing: '{date}'")
-                    if date and str(date).strip():
-                        print(f"[DEBUG] Setting filter 3 (Date) to: '{date}'")
-                        self.filter_frames[2]["fuzzy"].set(str(date))
-                        print(
-                            f"[DEBUG] After setting, filter 3 value is: '{self.filter_frames[2]['fuzzy'].get()}'"
-                        )
-                        # Don't trigger value_selected when in vision mode
+            # Update process button state
+            self._update_process_button()
 
-                        # Force update of filter values in UI
-                        QApplication.processEvents()
+            print(
+                "[DEBUG] Successfully applied vision preprocessing results to filters"
+            )
 
-                # Allow UI to update after setting third filter
-                QApplication.processEvents()
-
-                # Filter 4 (Amount)
-                if len(self.filter_frames) > 3:
-                    amount = extracted_data.get("total_amount")
-                    print(f"[DEBUG] Amount from vision preprocessing: '{amount}'")
-                    if amount and str(amount).strip():
-                        print(f"[DEBUG] Setting filter 4 (Amount) to: '{amount}'")
-                        self.filter_frames[3]["fuzzy"].set(str(amount))
-                        print(
-                            f"[DEBUG] After setting, filter 4 value is: '{self.filter_frames[3]['fuzzy'].get()}'"
-                        )
-
-                        # Force update of filter values in UI
-                        QApplication.processEvents()
-
-                # Update process button state
-                self._update_process_button()
-
-                print(
-                    "[DEBUG] Successfully applied vision preprocessing results to filters"
-                )
-            else:
-                print(
-                    "[DEBUG] No filter frames available to apply vision preprocessing results"
-                )
-
-            # Disable vision mode after applying all values - important to reset this flag
+            # Disable vision mode after applying all values
             self._vision_mode = False
             print("[DEBUG] Disabling vision mode after auto-population complete")
 
@@ -1220,6 +1176,8 @@ class ProcessingTab(QWidget):
             import traceback
 
             print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+
+
 
     def _update_process_button(self) -> None:
         """Update the state of the process button."""

@@ -5,8 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "google-genai>=1.7.0",
     "openpyxl>=3.1.5",
     "pandas>=2.2.3",
-    "pymupdf>=1.25.3",
+    "psutil>=7.0.0",
+    "pyinstaller>=6.12.0",
+    "pymupdf>=1.25.4",
     "pyqt6>=6.8.1",
 ]

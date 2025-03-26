@@ -35,14 +35,16 @@ class ExcelManager(QObject):
         print("[DEBUG] All caches cleared")
         self._last_sheet: Optional[str] = None
 
-    def load_excel_data(self, file_path: str, sheet_name: str, force_reload: bool = False) -> bool:
+    def load_excel_data(
+        self, file_path: str, sheet_name: str, force_reload: bool = False
+    ) -> bool:
         """Load Excel data from file into DataFrame.
 
         Args:
             file_path: Path to the Excel file
             sheet_name: Name of the sheet to load
             force_reload: If True, will reload data even if it's already cached
-            
+
         Returns:
             bool: True if data was reloaded, False if using cached data
         """
@@ -65,14 +67,14 @@ class ExcelManager(QObject):
             # Try to normalize path for network paths
             normalized_path = file_path
             # Handle Windows UNC paths
-            if file_path.startswith('//') or file_path.startswith('\\\\'):
+            if file_path.startswith("//") or file_path.startswith("\\\\"):
                 try:
                     # Make sure the path is in a consistent format
-                    parts = file_path.replace('/', '\\').strip('\\').split('\\')
+                    parts = file_path.replace("/", "\\").strip("\\").split("\\")
                     if len(parts) >= 2:
                         normalized_path = f"\\\\{parts[0]}\\{parts[1]}"
                         if len(parts) > 2:
-                            normalized_path += '\\' + '\\'.join(parts[2:])
+                            normalized_path += "\\" + "\\".join(parts[2:])
                     print(f"[DEBUG] Normalized network path: {normalized_path}")
                 except Exception as path_err:
                     print(f"[DEBUG] Path normalization error: {str(path_err)}")
@@ -83,7 +85,9 @@ class ExcelManager(QObject):
                     normalized_path, sheet_name=sheet_name, engine="openpyxl"
                 )
             except OSError:
-                print(f"[DEBUG] Failed to read with normalized path, trying original path")
+                print(
+                    f"[DEBUG] Failed to read with normalized path, trying original path"
+                )
                 # If normalized path fails, try the original path
                 self.excel_data = pd.read_excel(
                     file_path, sheet_name=sheet_name, engine="openpyxl"
@@ -125,23 +129,25 @@ class ExcelManager(QObject):
             # Try to normalize path for network paths
             normalized_path = file_path
             # Handle Windows UNC paths
-            if file_path.startswith('//') or file_path.startswith('\\\\'):
+            if file_path.startswith("//") or file_path.startswith("\\\\"):
                 try:
                     # Make sure the path is in a consistent format
-                    parts = file_path.replace('/', '\\').strip('\\').split('\\')
+                    parts = file_path.replace("/", "\\").strip("\\").split("\\")
                     if len(parts) >= 2:
                         normalized_path = f"\\\\{parts[0]}\\{parts[1]}"
                         if len(parts) > 2:
-                            normalized_path += '\\' + '\\'.join(parts[2:])
+                            normalized_path += "\\" + "\\".join(parts[2:])
                     print(f"[DEBUG] Normalized network path: {normalized_path}")
                 except Exception as path_err:
                     print(f"[DEBUG] Path normalization error: {str(path_err)}")
-            
+
             try:
                 # Load workbook
                 wb = load_workbook(normalized_path, data_only=True)
             except:
-                print(f"[DEBUG] Failed to load workbook with normalized path, trying original path")
+                print(
+                    f"[DEBUG] Failed to load workbook with normalized path, trying original path"
+                )
                 try:
                     wb = load_workbook(file_path, data_only=True)
                 except Exception as wb_err:
@@ -149,7 +155,7 @@ class ExcelManager(QObject):
                     # If we can't load the workbook, just return without error
                     self._hyperlink_cache.clear()
                     return
-                
+
             try:
                 ws = wb[sheet_name]
             except KeyError as key_err:
@@ -175,7 +181,9 @@ class ExcelManager(QObject):
                     cell = ws.cell(row=row_idx, column=col_idx)
                     self._hyperlink_cache[row_idx - 2] = cell.hyperlink is not None
                 except Exception as cell_err:
-                    print(f"[DEBUG] Error reading cell at row {row_idx}: {str(cell_err)}")
+                    print(
+                        f"[DEBUG] Error reading cell at row {row_idx}: {str(cell_err)}"
+                    )
                     # Continue with next cell instead of aborting
 
             self._last_cached_key = cache_key

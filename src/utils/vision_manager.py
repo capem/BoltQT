@@ -45,32 +45,34 @@ class VisionManager:
     def preprocess_pdf(self, pdf_path: str) -> Optional[Dict[str, Any]]:
         """Run vision preprocessing on a PDF to extract data for filter population.
 
-        This function handles preprocessing PDFs to extract data that can be used
-        to auto-populate filter fields in the UI, completely separate from the
-        actual PDF processing workflow.
-
         Args:
-            pdf_path: Path to the PDF file to preprocess
+            pdf_path: Path to the PDF file to process
 
         Returns:
-            Optional[Dict[str, Any]]: Vision preprocessing results or None if failed
+            Optional dict containing extracted data for filter population,
+            or None if preprocessing fails or is disabled
         """
-        if not self._vision_parser:
-            print(
-                "[DEBUG] Vision preprocessing not available - service not initialized"
-            )
+        if not self.is_vision_enabled():
+            print("[DEBUG] Vision preprocessing is disabled in configuration")
             return None
 
-        config = self.config_manager.get_config()
-        vision_config = config.get("vision", {})
-
-        if not vision_config.get("enabled", False):
-            print("[DEBUG] Vision preprocessing is disabled in config")
+        if not self._vision_parser:
+            print("[DEBUG] Vision preprocessing service is not available")
             return None
 
         try:
-            print(f"[DEBUG] Running vision preprocessing on {pdf_path}")
-            vision_result = self._vision_parser.process_invoice(pdf_path)
+            # Get the current preset configuration from the config manager
+            preset_name = self.config_manager.get_current_preset_name()
+            document_type = self.config_manager.get_config().get("document_type", "")
+
+            print(
+                f"[DEBUG] Running vision preprocessing on {pdf_path} using preset '{preset_name}'"
+            )
+            if document_type:
+                print(f"[DEBUG] Document type: {document_type}")
+
+            # Process the PDF with the current preset configuration
+            vision_result = self._vision_parser.process_document(pdf_path)
             print("[DEBUG] Vision preprocessing completed successfully")
             return vision_result
         except VisionParsingError as e:
@@ -103,7 +105,7 @@ class VisionManager:
 
 
 class VisionParserService:
-    """Service for extracting information from scanned invoices using Google Gemini API for filter preprocessing."""
+    """Service for extracting information from documents using Google Gemini API for filter preprocessing."""
 
     def __init__(self, config_manager):
         """Initialize the vision preprocessing service with configuration.
@@ -124,7 +126,7 @@ class VisionParserService:
     def _init_gemini_client(self) -> None:
         """Initialize the Gemini API client."""
         config = self.config_manager.get_config()
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = os.getenv("GEMINI_API_KEY")
 
         # Check if API key is available
         if not api_key:
@@ -144,27 +146,27 @@ class VisionParserService:
             )
             self.client = None
 
-    def process_invoice(self, pdf_path: str) -> Dict[str, Any]:
-        """Preprocess a PDF invoice using vision AI to extract data for filter population.
+    def process_document(self, pdf_path: str) -> Dict[str, Any]:
+        """Preprocess a PDF document using vision AI to extract data for filter population.
 
         Args:
             pdf_path: Path to the PDF file
 
         Returns:
-            Dict containing extracted invoice data for filter population
+            Dict containing extracted document data for filter population
 
         Raises:
             VisionParsingError: If preprocessing fails
         """
         try:
-            print(f"[DEBUG] Starting vision preprocessing for invoice: {pdf_path}")
+            print(f"[DEBUG] Starting vision preprocessing for document: {pdf_path}")
 
-            # Check configuration for vision preprocessing
+            # Get configuration for vision preprocessing
             config = self.config_manager.get_config()
-            vision_config = config.get("vision", {})
-            print(
-                f"[DEBUG] Vision preprocessing config: {json.dumps(vision_config, indent=2)}"
-            )
+            document_type = config.get("document_type", "")
+
+            if document_type:
+                print(f"[DEBUG] Document type: {document_type}")
 
             # Step 1: Convert PDF to images
             print("[DEBUG] Converting PDF to images...")
@@ -174,9 +176,27 @@ class VisionParserService:
                 raise VisionParsingError("Failed to convert PDF to images")
             print(f"[DEBUG] Generated {len(image_paths)} images from PDF")
 
-            # Step 2: Extract text using Gemini Vision API
+            # Step 2: Extract text using Gemini Vision API with prompt from config
             print("[DEBUG] Extracting data from images with Gemini...")
-            extracted_data = self._extract_invoice_data(image_paths)
+
+            # Get prompt from config
+            prompt = config.get("prompt", "").strip()
+
+            if not prompt:
+                print(
+                    "[DEBUG] No prompt defined in configuration, cannot process document"
+                )
+                raise VisionParsingError("No prompt defined in configuration")
+
+            # Get field mappings from config
+            field_mappings = config.get("field_mappings", {})
+
+            if not field_mappings:
+                print(
+                    "[DEBUG] No field mappings defined in configuration, document extraction may be incomplete"
+                )
+
+            extracted_data = self._extract_document_data(image_paths, prompt)
             print(
                 f"[DEBUG] Extracted data for filter population: {json.dumps(extracted_data, indent=2)}"
             )
@@ -191,19 +211,27 @@ class VisionParserService:
                 f"[DEBUG] Supplier validation result: {json.dumps(supplier_validation, indent=2)}"
             )
 
+            # Map extracted data to expected filter fields
+            normalized_data = self._map_extracted_fields(extracted_data, field_mappings)
+            print(
+                f"[DEBUG] Normalized data for filters: {json.dumps(normalized_data, indent=2)}"
+            )
+
             # Combine results
             result = {
                 "extracted_data": extracted_data,
+                "normalized_data": normalized_data,
                 "supplier_validation": supplier_validation,
                 "validation_status": "validated"
                 if supplier_validation["match_found"]
                 else "needs_review",
                 "confidence_score": supplier_validation.get("confidence", 0),
                 "processing_time": datetime.now().isoformat(),
+                "document_type": document_type,
             }
 
             print(
-                f"[DEBUG] Vision preprocessing complete. Final result: {json.dumps(result, indent=2)}"
+                f"[DEBUG] Vision preprocessing complete. Final result keys: {list(result.keys())}"
             )
             return result
 
@@ -214,6 +242,31 @@ class VisionParserService:
 
             print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
             raise VisionParsingError(error_msg)
+
+    def _map_extracted_fields(
+        self, extracted_data: Dict[str, Any], field_mappings: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """Maps extracted fields to filter fields based on field mappings.
+
+        Args:
+            extracted_data: Raw extracted data from vision API
+            field_mappings: Mapping of extracted field names to filter names
+
+        Returns:
+            Dict with normalized field names matching filters
+        """
+        normalized_data = {}
+
+        # Map each extracted field to its corresponding filter
+        for extracted_field, filter_field in field_mappings.items():
+            if extracted_field in extracted_data:
+                normalized_data[filter_field] = extracted_data[extracted_field]
+
+        # Always include standard fields for backward compatibility
+        if "supplier_name" in extracted_data and "filter1" not in normalized_data:
+            normalized_data["filter1"] = extracted_data["supplier_name"]
+
+        return normalized_data
 
     def _convert_pdf_to_images(self, pdf_path: str) -> List[str]:
         """Convert PDF pages to images for processing.
@@ -250,46 +303,32 @@ class VisionParserService:
             print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
             return []
 
-    def _extract_invoice_data(self, image_paths: List[str]) -> Dict[str, Any]:
-        """Extract invoice data from images using Gemini Vision API.
+    def _extract_document_data(
+        self, image_paths: List[str], prompt: str
+    ) -> Dict[str, Any]:
+        """Extract document data from images using Gemini Vision API with a specific prompt.
 
         Args:
             image_paths: List of image paths to process
+            prompt: Custom prompt for extraction based on document type
 
         Returns:
-            Structured data extracted from the invoice
+            Structured data extracted from the document
         """
         try:
             if not self.client:
                 print(
-                    "[DEBUG] Cannot extract invoice data - Gemini client not initialized"
+                    "[DEBUG] Cannot extract document data - Gemini client not initialized"
                 )
                 raise VisionParsingError("Gemini client not initialized")
 
-            print(f"[DEBUG] Extracting data from {len(image_paths)} invoice images")
+            print(f"[DEBUG] Extracting data from {len(image_paths)} document images")
 
             # Get the first image for processing
             image_path = image_paths[0]
             print(f"[DEBUG] Using image: {image_path}")
 
-            # Define the prompt for invoice data extraction
-            prompt = """
-            Extract the following information from this scanned invoice:
-            1. Supplier/Vendor Name
-            2. Invoice Number
-            3. Invoice Date (in format DD/MM/YYYY)
-            4. Total Amount (with currency)
-            
-            Return ONLY a JSON object with these fields as keys:
-            {
-                "supplier_name": "extracted supplier name",
-                "invoice_number": "extracted invoice number",
-                "invoice_date": "extracted date in DD/MM/YYYY format",
-                "total_amount": "extracted amount with currency"
-            }
-            
-            If any field is not found in the image, set its value to null.
-            """
+            # Use the provided document-specific prompt
             print(f"[DEBUG] Using prompt: {prompt}")
 
             try:
@@ -317,6 +356,11 @@ class VisionParserService:
                     ),
                 ]
 
+                # Get model from config
+                config = self.config_manager.get_config()
+                vision_config = config.get("vision", {})
+                model = vision_config.get("model", "gemini-2.0-flash")
+
                 # Configure the generation parameters
                 generate_config = types.GenerateContentConfig(
                     temperature=0.5,  # Lower temperature for more focused extraction
@@ -328,7 +372,6 @@ class VisionParserService:
 
                 # Process the image with streaming
                 response_text = ""
-                model = "gemini-2.0-flash"
                 print(f"[DEBUG] Calling Gemini API with model: {model}")
 
                 for chunk in self.client.models.generate_content_stream(
@@ -394,9 +437,6 @@ class VisionParserService:
                     # If all parsing attempts fail, return empty object
                     return {
                         "supplier_name": None,
-                        "invoice_number": None,
-                        "invoice_date": None,
-                        "total_amount": None,
                     }
 
             except Exception as e:
@@ -404,14 +444,9 @@ class VisionParserService:
                 import traceback
 
                 print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
-                return {
-                    "supplier_name": None,
-                    "invoice_number": None,
-                    "invoice_date": None,
-                    "total_amount": None,
-                }
+                return {}
         except Exception as e:
-            print(f"[DEBUG] Error extracting invoice data: {str(e)}")
+            print(f"[DEBUG] Error extracting document data: {str(e)}")
             import traceback
 
             print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
