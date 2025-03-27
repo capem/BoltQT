@@ -4,6 +4,7 @@ from string import Template
 from datetime import datetime
 import os
 import re
+from .path_utils import normalize_path, sanitize_path_component
 
 
 class TemplateManager:
@@ -81,7 +82,7 @@ class TemplateManager:
         """Convert a value to a safe path component.
 
         Replaces invalid characters with underscores and ensures the result
-        is a valid path component.
+        is a valid path component. Preserves drive letters and UNC paths.
         """
         if value is None:
             return "_"
@@ -97,19 +98,8 @@ class TemplateManager:
         if isinstance(value, datetime):
             str_value = value.strftime("%Y-%m-%d")
 
-        # Replace invalid path characters
-        invalid_chars = r'<>:"/\|?*'
-        for char in invalid_chars:
-            str_value = str_value.replace(char, "_")
-
-        # Replace multiple underscores with a single one
-        while "__" in str_value:
-            str_value = str_value.replace("__", "_")
-
-        # Remove leading/trailing underscores
-        str_value = str_value.strip("_")
-
-        return str_value or "_"
+        # Use the path_utils sanitize_path_component which preserves drive letters and UNC paths
+        return sanitize_path_component(str_value)
 
     def _parse_field(self, field: str) -> tuple[str, list[str]]:
         """Parse a field into its name and operations.
@@ -313,7 +303,7 @@ class TemplateManager:
                 path = self.process_template(template, data)
             else:
                 # Handle the ${name} format (string.Template)
-                # Convert all values to safe path components
+                # Convert all values to safe path components while preserving drive letters
                 safe_data = {
                     key: self._safe_path_component(value) for key, value in data.items()
                 }
@@ -328,9 +318,9 @@ class TemplateManager:
                     end = path.find("}", start) + 1
                     path = path[:start] + "_" + path[end:]
 
-            # Normalize path separators
-            path = path.replace("/", os.path.sep).replace("\\", os.path.sep)
-
+            # Normalize path using the unified path_utils.normalize_path function
+            # This preserves drive letters and handles path separators correctly
+            path = normalize_path(path)
             return path
 
         except Exception as e:

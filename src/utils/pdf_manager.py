@@ -6,6 +6,7 @@ import shutil
 from .models import PDFTask
 from .template_manager import TemplateManager
 from datetime import datetime
+from .path_utils import normalize_path, is_same_path
 
 
 class PDFManager:
@@ -28,31 +29,8 @@ class PDFManager:
         Returns:
             str: The normalized path
         """
-        if not path:
-            return ""
-
-        # Replace both forward and backslashes with the system's path separator
-        normalized = path.replace("/", os.path.sep).replace("\\", os.path.sep)
-
-        # Handle UNC paths (network paths)
-        # Convert //server/share to \\server\share or vice versa based on the OS
-        if normalized.startswith(os.path.sep + os.path.sep):
-            # It's already in the form \\server\share or //server/share
-            pass
-        elif normalized.startswith(r"\\"):
-            # It's in Windows UNC format but we're on a system using forward slashes
-            if os.path.sep == "/":
-                normalized = normalized.replace(r"\\", "//")
-        elif normalized.startswith("//"):
-            # It's in Unix UNC format but we're on a system using backslashes
-            if os.path.sep == "\\":
-                normalized = normalized.replace("//", r"\\")
-
-        # For case-insensitive file systems, convert to lowercase
-        if os.name == "nt":  # Windows
-            normalized = normalized.lower()
-
-        return normalized
+        # Use the centralized normalize_path function from path_utils
+        return normalize_path(path)
 
     def _paths_equal(self, path1: str, path2: str) -> bool:
         """Check if two paths point to the same file.
@@ -64,25 +42,8 @@ class PDFManager:
         Returns:
             bool: True if the paths point to the same file
         """
-        if not path1 or not path2:
-            return False
-
-        # Normalize both paths
-        norm1 = self._normalize_path(path1)
-        norm2 = self._normalize_path(path2)
-
-        # Simple string comparison first (faster)
-        if norm1 == norm2:
-            return True
-
-        try:
-            # Try using samefile for more accurate comparison
-            # This handles symbolic links, junctions, etc.
-            return os.path.samefile(path1, path2)
-        except (OSError, ValueError):
-            # If samefile fails (e.g., file doesn't exist or different drives),
-            # fall back to normalized path comparison
-            return norm1 == norm2
+        # Use the centralized is_same_path function from path_utils
+        return is_same_path(path1, path2)
 
     def get_next_pdf(
         self, source_folder: str, active_tasks: Dict[str, PDFTask]
@@ -287,13 +248,8 @@ class PDFManager:
                     f"fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                 )
 
-            # Normalize path separators
-            result = result.replace("/", os.path.sep).replace("\\", os.path.sep)
-
-            # Replace any invalid characters in the final path
-            invalid_chars = ["<", ">", ":", '"', "|", "?", "*"]
-            for char in invalid_chars:
-                result = result.replace(char, "_")
+            # Normalize path separators using path_utils
+            result = normalize_path(result)
 
             return result
         except Exception as e:
@@ -343,8 +299,8 @@ class PDFManager:
             processed_folder: Base folder for processed files.
             output_template: Template string for output path generation.
         """
-        # Normalize the source path to ensure consistent handling
-        source_path = task.pdf_path.replace("/", os.path.sep).replace("\\", os.path.sep)
+        # Normalize the source path using path_utils
+        source_path = normalize_path(task.pdf_path)
         print(f"[DEBUG] Processing PDF file: {source_path}")
 
         if not os.path.exists(source_path):
@@ -372,10 +328,8 @@ class PDFManager:
                 if not os.path.isabs(output_path):
                     output_path = os.path.join(processed_folder, output_path)
 
-                # Normalize output path for consistent handling
-                output_path = output_path.replace("/", os.path.sep).replace(
-                    "\\", os.path.sep
-                )
+                # Normalize output path using path_utils
+                output_path = normalize_path(output_path)
                 print(f"[DEBUG] Final output path: {output_path}")
 
                 # Ensure output directory exists

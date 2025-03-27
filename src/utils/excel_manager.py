@@ -8,6 +8,7 @@ from PyQt6.QtCore import QObject
 from shutil import copy2
 from os import path, remove
 import traceback
+from .path_utils import normalize_path, make_relative_path, split_drive_or_unc
 
 
 class ExcelManager(QObject):
@@ -215,7 +216,12 @@ class ExcelManager(QObject):
             print(
                 f"[DEBUG] Updating PDF link in Excel: file={file_path}, sheet={sheet_name}, row={row_idx}, column={column_name}"
             )
-            print(f"[DEBUG] Linking to PDF: {pdf_path}")
+            
+            # Normalize paths using path_utils
+            normalized_excel_path = normalize_path(file_path)
+            normalized_pdf_path = normalize_path(pdf_path)
+            
+            print(f"[DEBUG] Linking to PDF: {normalized_pdf_path}")
 
             # Load workbook
             wb = load_workbook(file_path)
@@ -243,64 +249,19 @@ class ExcelManager(QObject):
                 )
                 print(f"[DEBUG] Found existing hyperlink: {original_link}")
 
-            # Check if paths are on different mount points/drives
-            excel_drive = os.path.splitdrive(os.path.abspath(file_path))[0]
-            pdf_drive = os.path.splitdrive(os.path.abspath(pdf_path))[0]
-
-            # For network paths, get the server and share
-            excel_mount = excel_drive
-            pdf_mount = pdf_drive
-
-            # Handle UNC paths (network shares)
-            if file_path.startswith("\\\\"):
-                excel_parts = file_path.split("\\")
-                if len(excel_parts) >= 4:  # \\server\share\...
-                    excel_mount = f"\\\\{excel_parts[2]}\\{excel_parts[3]}"
-
-            if pdf_path.startswith("\\\\"):
-                pdf_parts = pdf_path.split("\\")
-                if len(pdf_parts) >= 4:  # \\server\share\...
-                    pdf_mount = f"\\\\{pdf_parts[2]}\\{pdf_parts[3]}"
-
-            # Also handle forward slash network paths
-            if file_path.startswith("//"):
-                excel_parts = file_path.split("/")
-                if len(excel_parts) >= 4:  # //server/share/...
-                    excel_mount = f"//{excel_parts[2]}/{excel_parts[3]}"
-
-            if pdf_path.startswith("//"):
-                pdf_parts = pdf_path.split("/")
-                if len(pdf_parts) >= 4:  # //server/share/...
-                    pdf_mount = f"//{pdf_parts[2]}/{pdf_parts[3]}"
-
-            print(f"[DEBUG] Excel mount: {excel_mount}, PDF mount: {pdf_mount}")
-
-            # Determine if we can use a relative path
-            use_relative_path = excel_mount == pdf_mount
-
-            # Set the target path
-            if use_relative_path:
-                try:
-                    # Use relative path if possible
-                    target_path = os.path.relpath(pdf_path, os.path.dirname(file_path))
-                    print(f"[DEBUG] Using relative path: {target_path}")
-                except ValueError as e:
-                    print(f"[DEBUG] Error creating relative path: {str(e)}")
-                    target_path = pdf_path
-                    print(f"[DEBUG] Falling back to absolute path: {target_path}")
-            else:
-                # Use absolute path if on different mounts
-                target_path = pdf_path
-                print(f"[DEBUG] Using absolute path (different mounts): {target_path}")
-                print(
-                    f"[DEBUG] path is on mount '{pdf_mount}', start on mount '{excel_mount}'"
-                )
-
+            # Use path_utils to determine if paths are on same drive/mount
+            excel_drive, _ = split_drive_or_unc(normalized_excel_path)
+            pdf_drive, _ = split_drive_or_unc(normalized_pdf_path)
+            
+            print(f"[DEBUG] Excel mount: {excel_drive}, PDF mount: {pdf_drive}")
+            
+            # Calculate target path using path_utils make_relative_path
+            # This correctly handles relative paths creation even with different path formats
+            target_path = make_relative_path(normalized_excel_path, normalized_pdf_path)
+            print(f"[DEBUG] Target path for hyperlink: {target_path}")
+            
             # Update hyperlink using Excel formula and styling
-
-            # Extract original value or use existing cell value
             hyperlink = Hyperlink(ref=cell.coordinate, target=target_path)
-
             hyperlink.target_mode = "file"
             cell.hyperlink = hyperlink
             cell.style = "Hyperlink"
@@ -308,6 +269,7 @@ class ExcelManager(QObject):
             # Save workbook
             wb.save(file_path)
             print(f"[DEBUG] Set HYPERLINK formula: {cell.value}")
+            print(f"[DEBUG] Updated Excel hyperlink, original: {original_link}")
             print("[DEBUG] Excel file saved successfully")
 
             # Update cache
