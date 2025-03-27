@@ -247,7 +247,7 @@ class VisionParserService:
             )
 
             # Map extracted data to expected filter fields
-            normalized_data = self._map_extracted_fields(extracted_data, field_mappings)
+            normalized_data = self._map_extracted_fields(extracted_data, field_mappings, supplier_validation)
             print(
                 f"[DEBUG] Normalized data for filters: {json.dumps(normalized_data, indent=2)}"
             )
@@ -279,27 +279,55 @@ class VisionParserService:
             raise VisionParsingError(error_msg)
 
     def _map_extracted_fields(
-        self, extracted_data: Dict[str, Any], field_mappings: Dict[str, str]
+        self, extracted_data: Dict[str, Any], field_mappings: Dict[str, str],
+        supplier_validation: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """Maps extracted fields to filter fields based on field mappings.
 
         Args:
             extracted_data: Raw extracted data from vision API
             field_mappings: Mapping of extracted field names to filter names
+            supplier_validation: Result of supplier fuzzy matching (optional)
 
         Returns:
             Dict with normalized field names matching filters
         """
         normalized_data = {}
-
+        
+        # Get config for supplier match threshold
+        config = self.config_manager.get_config()
+        vision_config = config.get("vision", {})
+        supplier_match_threshold = vision_config.get("supplier_match_threshold", 0.75)
+        
         # Map each extracted field to its corresponding filter
         for extracted_field, filter_field in field_mappings.items():
             if extracted_field in extracted_data:
-                normalized_data[filter_field] = extracted_data[extracted_field]
+                # Special handling for supplier name when it's mapped to filter1
+                if extracted_field == "supplier_name" and filter_field == "filter1" and supplier_validation:
+                    if (supplier_validation.get("match_found", False) and
+                        supplier_validation.get("confidence", 0) >= supplier_match_threshold):
+                        # Use the fuzzy matched value
+                        print(f"[DEBUG] Using fuzzy matched supplier name: '{supplier_validation['best_match']}' "
+                              f"instead of '{extracted_data[extracted_field]}' (confidence: {supplier_validation['confidence']})")
+                        normalized_data[filter_field] = supplier_validation["best_match"]
+                    else:
+                        # Use original value
+                        normalized_data[filter_field] = extracted_data[extracted_field]
+                        print(f"[DEBUG] Using original supplier name: '{extracted_data[extracted_field]}' "
+                              f"(no match or below threshold {supplier_match_threshold})")
+                else:
+                    # Standard mapping for non-supplier fields
+                    normalized_data[filter_field] = extracted_data[extracted_field]
 
         # Always include standard fields for backward compatibility
         if "supplier_name" in extracted_data and "filter1" not in normalized_data:
-            normalized_data["filter1"] = extracted_data["supplier_name"]
+            # Similar special handling for the default case
+            if supplier_validation and supplier_validation.get("match_found", False) and supplier_validation.get("confidence", 0) >= supplier_match_threshold:
+                normalized_data["filter1"] = supplier_validation["best_match"]
+                print(f"[DEBUG] Using fuzzy matched supplier name (default): '{supplier_validation['best_match']}'")
+            else:
+                normalized_data["filter1"] = extracted_data["supplier_name"]
+                print(f"[DEBUG] Using original supplier name (default): '{extracted_data['supplier_name']}'")
 
         return normalized_data
 
@@ -402,7 +430,7 @@ class VisionParserService:
                     top_p=0.95,
                     top_k=40,
                     max_output_tokens=8192,
-                    response_mime_type="text/plain",  # Changed to text/plain as per example
+                    response_mime_type="application/json",
                 )
 
                 # Process the image with streaming
