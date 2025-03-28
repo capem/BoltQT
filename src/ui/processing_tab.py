@@ -413,17 +413,39 @@ class ProcessingTab(QWidget):
         if self.filter_frames:
             self._load_filter_values(0)
 
-    def _format_filter2_value(
-        self, value: str, row_idx: int, has_hyperlink: bool = False
-    ) -> str:
-        """Format filter2 value with row number and checkmark if hyperlinked."""
+    def _format_filter2_value(self, value: str, row_idx: int) -> str: # Removed has_hyperlink param
+        """Format filter2 value with row number and checkmark if hyperlinked (using cache)."""
         import re
+
+        has_hyperlink = False
+        # Check cache for hyperlink if filter 2 exists
+        if len(self.filter_frames) > 1:
+            filter2_column_name = self.filter_frames[1]["column"]
+            config = self.config_manager.get_config()
+            excel_file = config.get("excel_file")
+            excel_sheet = config.get("excel_sheet")
+
+            if excel_file and excel_sheet:
+                # Get 0-based column index
+                col_idx_0_based = self.excel_manager._get_column_index(
+                    excel_file, excel_sheet, filter2_column_name
+                )
+                if col_idx_0_based is not None:
+                    # Check cache using 0-based row and column indices
+                    cached_link = self.excel_manager.get_hyperlink(row_idx, col_idx_0_based)
+                    # --- Add Debug Print ---
+                    print(f"[DEBUG FORMAT] row={row_idx}, col={col_idx_0_based} ('{filter2_column_name}'), cached_link='{cached_link}', has_hyperlink={bool(cached_link)}")
+                    # --- End Debug Print ---
+                    has_hyperlink = bool(cached_link)
 
         # Check if value already contains Excel Row information
         if re.search(r"⟨Excel Row[:-]\s*\d+⟩", value):
             # Already has Excel Row info, just add checkmark if needed
             if has_hyperlink and not value.startswith("✓ "):
                 return "✓ " + value
+            # Remove checkmark if hyperlink no longer exists
+            if not has_hyperlink and value.startswith("✓ "):
+                return value[2:]
             return value
 
         prefix = "✓ " if has_hyperlink else ""
@@ -556,10 +578,8 @@ class ProcessingTab(QWidget):
 
             # Special handling for filter2 - show ALL rows, not just unique values
             if filter_index == 1:
-                # Cache hyperlinks for the filter2 column
-                self.excel_manager.cache_hyperlinks_for_column(
-                    config["excel_file"], config["excel_sheet"], column
-                )
+                # Hyperlinks are now pre-cached at startup or on config change.
+                # No need to call cache_hyperlinks_for_column here anymore.
 
                 # Get all rows from filtered_df, not just unique values
                 formatted_values = []
@@ -567,10 +587,8 @@ class ProcessingTab(QWidget):
                 # Process each row individually
                 for idx, row in filtered_df.iterrows():
                     value = str(row[column]).strip()
-                    has_hyperlink = self.excel_manager.has_hyperlink(idx)
-                    formatted_value = self._format_filter2_value(
-                        value, idx, has_hyperlink
-                    )
+                    # Format using the updated method which checks the cache
+                    formatted_value = self._format_filter2_value(value, idx)
                     formatted_values.append(formatted_value)
 
                 # Sort the formatted values for better user experience
@@ -1282,9 +1300,18 @@ class ProcessingTab(QWidget):
     def _apply_config_change(self) -> None:
         """Apply configuration changes."""
         self._pending_config_change_id = None
+        print("[DEBUG] Applying configuration changes...")
+
+        # Store old config values for comparison
+        old_excel_file = self.excel_manager._last_file
+        old_excel_sheet = self.excel_manager._last_sheet
+
+        # Get new config
+        config = self.config_manager.get_config()
+        new_excel_file = config.get("excel_file")
+        new_excel_sheet = config.get("excel_sheet")
 
         # Update vision button enabled state
-        config = self.config_manager.get_config()
         vision_enabled = config.get("vision", {}).get("enabled", False)
         self.vision_button.setEnabled(vision_enabled)
         if not vision_enabled:
@@ -1296,6 +1323,35 @@ class ProcessingTab(QWidget):
                 "Manually run vision processing on current PDF"
             )
 
+        # Check if Excel file or sheet changed
+        excel_changed = (
+            new_excel_file != old_excel_file or new_excel_sheet != old_excel_sheet
+        )
+
+        # Reload Excel data and refresh hyperlink cache if changed
+        if excel_changed and new_excel_file and new_excel_sheet:
+            print("[DEBUG] Excel configuration changed, reloading data and cache...")
+            self._update_status("Reloading Excel data and cache...")
+            try:
+                # Force reload of data
+                self.excel_manager.load_excel_data(
+                    new_excel_file, new_excel_sheet, force_reload=True
+                )
+                # Refresh hyperlink cache (this might take time)
+                # Consider running this in a thread if it blocks UI
+                self.excel_manager.refresh_hyperlink_cache(
+                    new_excel_file, new_excel_sheet
+                )
+                self._update_status("Excel data and cache reloaded.")
+            except Exception as e:
+                self._handle_error(e, "reloading Excel data after config change")
+                self._update_status("Error reloading Excel data.")
+        elif excel_changed:
+            # Excel config removed or incomplete, clear data
+            print("[DEBUG] Excel configuration removed or incomplete, clearing data.")
+            self.excel_manager.clear_caches()
+
+        # Always rebuild filters and try loading next PDF
         self._setup_filters()
         self._load_next_pdf()
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
-from typing import Dict, Optional, Tuple, List, Any
+from typing import Dict, Optional, Tuple, List, Any, Callable
 import os
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.worksheet.hyperlink import Hyperlink
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, QReadWriteLock
 from shutil import copy2
 from os import path, remove
 import traceback
@@ -17,24 +17,29 @@ class ExcelManager(QObject):
     def __init__(self) -> None:
         super().__init__()
         self.excel_data: Optional[pd.DataFrame] = None
-        self._hyperlink_cache: Dict[int, bool] = {}
-        self._last_cached_key: Optional[str] = None
+        # Cache format: {(row_idx: int, col_idx: int): hyperlink_target: Optional[str]}
+        self._hyperlink_cache: Dict[Tuple[int, int], Optional[str]] = {}
+        self._cache_lock = QReadWriteLock()
         self._last_file: Optional[str] = None
         self._last_sheet: Optional[str] = None
         self._sheet_cache: Dict[str, list] = {}  # Cache for sheet names
         self._column_cache: Dict[str, list] = {}  # Cache for column names
+        self._header_cache: Dict[str, Dict[str, int]] = {} # Cache for header {sheet_key: {col_name: col_idx}}
 
     def clear_caches(self) -> None:
         """Clear all cached data."""
-        self._hyperlink_cache.clear()
-        self._last_cached_key = None
-        self._last_file = None
-        self._last_sheet = None
-        self._sheet_cache.clear()
-        self._column_cache.clear()
-        self.excel_data = None
-        print("[DEBUG] All caches cleared")
-        self._last_sheet: Optional[str] = None
+        self._cache_lock.lockForWrite()
+        try:
+            self._hyperlink_cache.clear()
+            self._last_file = None
+            self._last_sheet = None
+            self._sheet_cache.clear()
+            self._column_cache.clear()
+            self._header_cache.clear()
+            self.excel_data = None
+            print("[DEBUG] All caches cleared")
+        finally:
+            self._cache_lock.unlock()
 
     def load_excel_data(
         self, file_path: str, sheet_name: str, force_reload: bool = False
@@ -98,9 +103,18 @@ class ExcelManager(QObject):
             self._last_file = file_path
             self._last_sheet = sheet_name
 
-            # Clear hyperlink cache
-            self._hyperlink_cache.clear()
-            self._last_cached_key = None
+            # Clear hyperlink cache (acquire lock)
+            self._cache_lock.lockForWrite()
+            try:
+                self._hyperlink_cache.clear()
+                print("[DEBUG] Hyperlink cache cleared during data load")
+            finally:
+                self._cache_lock.unlock()
+
+            # Clear header cache for this sheet
+            sheet_key = f"{file_path}:{sheet_name}"
+            if sheet_key in self._header_cache:
+                del self._header_cache[sheet_key]
 
             return True
 
@@ -109,101 +123,147 @@ class ExcelManager(QObject):
             self.excel_data = None
             self._last_file = None
             self._last_sheet = None
-            self._hyperlink_cache.clear()
-            self._last_cached_key = None
+            self._cache_lock.lockForWrite()
+            try:
+                self._hyperlink_cache.clear()
+            finally:
+                self._cache_lock.unlock()
             raise
 
-    def cache_hyperlinks_for_column(
-        self, file_path: str, sheet_name: str, column_name: str
+    def preload_hyperlinks_async(
+        self,
+        file_path: str,
+        sheet_name: str,
+        progress_callback: Optional[Callable[[int], None]] = None,
     ) -> None:
-        """Cache hyperlinks for a specific column."""
+        """Preload all hyperlinks from the sheet into the cache asynchronously."""
+        print(f"[DEBUG] Starting hyperlink preloading for {file_path} - {sheet_name}")
+        self._cache_lock.lockForWrite()
         try:
-            cache_key = f"{file_path}:{sheet_name}:{column_name}"
-
-            # Check if we need to update cache
-            if self._last_cached_key == cache_key and self._hyperlink_cache:
-                print("[DEBUG] Using existing hyperlink cache")
-                return
-
-            print(f"[DEBUG] Caching hyperlinks for column: {column_name}")
+            self._hyperlink_cache.clear()
 
             # Try to normalize path for network paths
             normalized_path = file_path
-            # Handle Windows UNC paths
             if file_path.startswith("//") or file_path.startswith("\\\\"):
                 try:
-                    # Make sure the path is in a consistent format
                     parts = file_path.replace("/", "\\").strip("\\").split("\\")
                     if len(parts) >= 2:
                         normalized_path = f"\\\\{parts[0]}\\{parts[1]}"
                         if len(parts) > 2:
                             normalized_path += "\\" + "\\".join(parts[2:])
-                    print(f"[DEBUG] Normalized network path: {normalized_path}")
+                    print(f"[DEBUG] Normalized network path for preloading: {normalized_path}")
                 except Exception as path_err:
-                    print(f"[DEBUG] Path normalization error: {str(path_err)}")
+                    print(f"[DEBUG] Path normalization error during preloading: {str(path_err)}")
 
             try:
-                # Load workbook
+                # Load workbook WITHOUT read_only=True to access hyperlinks
                 wb = load_workbook(normalized_path, data_only=True)
-            except:
-                print(
-                    f"[DEBUG] Failed to load workbook with normalized path, trying original path"
-                )
+            except Exception:
+                print(f"[DEBUG] Failed preload with normalized path, trying original: {file_path}")
                 try:
+                    # Load workbook WITHOUT read_only=True to access hyperlinks
                     wb = load_workbook(file_path, data_only=True)
                 except Exception as wb_err:
-                    print(f"[DEBUG] Could not load workbook: {str(wb_err)}")
-                    # If we can't load the workbook, just return without error
-                    self._hyperlink_cache.clear()
-                    return
+                    print(f"[DEBUG] Could not load workbook for preloading: {str(wb_err)}")
+                    return # Exit if workbook can't be loaded
 
             try:
                 ws = wb[sheet_name]
-            except KeyError as key_err:
-                print(f"[DEBUG] Sheet '{sheet_name}' not found: {str(key_err)}")
+            except KeyError:
+                print(f"[DEBUG] Sheet '{sheet_name}' not found during preloading.")
+                wb.close()
                 return
             except Exception as sheet_err:
-                print(f"[DEBUG] Error accessing sheet: {str(sheet_err)}")
+                print(f"[DEBUG] Error accessing sheet during preloading: {str(sheet_err)}")
+                wb.close()
                 return
 
-            # Find the column index
-            header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
-            if column_name not in header:
-                print(f"[DEBUG] Column '{column_name}' not found")
-                return
-            col_idx = header[column_name]
+            total_rows = ws.max_row
+            processed_rows = 0
 
-            # Clear existing cache
-            self._hyperlink_cache.clear()
+            # Iterate through all cells to find hyperlinks
+            for row_idx, row in enumerate(ws.iter_rows()): # 0-based index from iter_rows
+                for col_idx, cell in enumerate(row): # 0-based index from row iteration
+                    if cell.hyperlink:
+                        try:
+                            target = cell.hyperlink.target
+                            # Store with 0-based indices
+                            cache_key = (row_idx, col_idx)
+                            self._hyperlink_cache[cache_key] = target
+                            # --- Add Debug Print ---
+                            print(f"[DEBUG PRELOAD] Added to cache: key={cache_key}, target='{target}'")
+                            # --- End Debug Print ---
+                        except Exception as link_err:
+                            print(f"[DEBUG] Error reading hyperlink at ({row_idx}, {col_idx}): {str(link_err)}")
+                            self._hyperlink_cache[(row_idx, col_idx)] = None # Mark as checked but failed
 
-            # Cache hyperlinks
-            for row_idx in range(2, ws.max_row + 1):  # Skip header row
-                try:
-                    cell = ws.cell(row=row_idx, column=col_idx)
-                    self._hyperlink_cache[row_idx - 2] = cell.hyperlink is not None
-                except Exception as cell_err:
-                    print(
-                        f"[DEBUG] Error reading cell at row {row_idx}: {str(cell_err)}"
-                    )
-                    # Continue with next cell instead of aborting
+                processed_rows += 1
+                if progress_callback and total_rows > 0 and processed_rows % 100 == 0: # Report every 100 rows
+                    progress = int((processed_rows / total_rows) * 100)
+                    progress_callback(progress)
 
-            self._last_cached_key = cache_key
+            wb.close()
+            print(f"[DEBUG] Finished hyperlink preloading. Cached {len(self._hyperlink_cache)} links.")
+            if progress_callback:
+                progress_callback(100) # Signal completion
 
         except Exception as e:
-            print(f"[DEBUG] Error caching hyperlinks: {str(e)}")
+            print(f"[DEBUG] Error during hyperlink preloading: {str(e)}")
+            # Keep potentially partially filled cache? Or clear? Clearing seems safer.
             self._hyperlink_cache.clear()
-            self._last_cached_key = None
-            # Don't raise, just silently fail
+        finally:
+            self._cache_lock.unlock()
 
-    def has_hyperlink(self, row_idx: int) -> bool:
-        """Check if a specific row has a hyperlink."""
-        return bool(self._hyperlink_cache.get(row_idx, False))
+    def refresh_hyperlink_cache(
+        self,
+        file_path: str,
+        sheet_name: str,
+        progress_callback: Optional[Callable[[int], None]] = None,
+    ) -> None:
+        """Force a refresh of the hyperlink cache."""
+        print("[DEBUG] Refreshing hyperlink cache...")
+        # This can be called directly, potentially in a separate thread if needed
+        self.preload_hyperlinks_async(file_path, sheet_name, progress_callback)
+
+    def get_hyperlink(self, row_idx: int, col_idx: int) -> Optional[str]:
+        """Get hyperlink target from cache using 0-based indices.
+
+        Args:
+            row_idx: 0-based row index.
+            col_idx: 0-based column index.
+
+        Returns:
+            Optional[str]: Hyperlink target or None if not found/cached.
+        """
+        self._cache_lock.lockForRead()
+        try:
+            link = self._hyperlink_cache.get((row_idx, col_idx))
+            # print(f"[DEBUG] Cache lookup for ({row_idx}, {col_idx}): {'Found' if link else 'Not Found'}")
+            return link
+        finally:
+            self._cache_lock.unlock()
+
+    def _get_column_index(self, file_path: str, sheet_name: str, column_name: str) -> Optional[int]:
+        """Get the 0-based index for a column name, using cache."""
+        sheet_key = f"{file_path}:{sheet_name}"
+        if sheet_key not in self._header_cache:
+            try:
+                wb = load_workbook(file_path, read_only=True)
+                ws = wb[sheet_name]
+                header = {cell.value: idx for idx, cell in enumerate(ws[1])} # 0-based index
+                self._header_cache[sheet_key] = header
+                wb.close()
+            except Exception as e:
+                print(f"[DEBUG] Error caching header for {sheet_key}: {str(e)}")
+                return None
+
+        return self._header_cache[sheet_key].get(column_name)
 
     def update_pdf_link(
         self,
         file_path: str,
         sheet_name: str,
-        row_idx: int,
+        row_idx: int, # 0-based row index
         pdf_path: str,
         column_name: str,
     ) -> Optional[str]:
@@ -216,26 +276,26 @@ class ExcelManager(QObject):
             print(
                 f"[DEBUG] Updating PDF link in Excel: file={file_path}, sheet={sheet_name}, row={row_idx}, column={column_name}"
             )
-            
+
             # Normalize paths using path_utils
             normalized_excel_path = normalize_path(file_path)
             normalized_pdf_path = normalize_path(pdf_path)
-            
+
             print(f"[DEBUG] Linking to PDF: {normalized_pdf_path}")
 
             # Load workbook
             wb = load_workbook(file_path)
             ws = wb[sheet_name]
 
-            # Find the column index
-            header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
-            if column_name not in header:
+            # Find the column index (0-based) using helper
+            col_idx_0_based = self._get_column_index(file_path, sheet_name, column_name)
+            if col_idx_0_based is None:
                 raise ValueError(f"Column '{column_name}' not found")
-            col_idx = header[column_name]
+            col_idx_1_based = col_idx_0_based + 1 # openpyxl uses 1-based index
 
             # Get the cell
-            excel_row = row_idx + 2  # +2 for header and 1-based index
-            cell = ws.cell(row=excel_row, column=col_idx)
+            excel_row_1_based = row_idx + 2  # +1 for header, +1 for 1-based index
+            cell = ws.cell(row=excel_row_1_based, column=col_idx_1_based)
 
             print(f"[DEBUG] Excel cell: {cell.coordinate}, Current value: {cell.value}")
 
@@ -252,14 +312,13 @@ class ExcelManager(QObject):
             # Use path_utils to determine if paths are on same drive/mount
             excel_drive, _ = split_drive_or_unc(normalized_excel_path)
             pdf_drive, _ = split_drive_or_unc(normalized_pdf_path)
-            
+
             print(f"[DEBUG] Excel mount: {excel_drive}, PDF mount: {pdf_drive}")
-            
+
             # Calculate target path using path_utils make_relative_path
-            # This correctly handles relative paths creation even with different path formats
             target_path = make_relative_path(normalized_excel_path, normalized_pdf_path)
             print(f"[DEBUG] Target path for hyperlink: {target_path}")
-            
+
             # Update hyperlink using Excel formula and styling
             hyperlink = Hyperlink(ref=cell.coordinate, target=target_path)
             hyperlink.target_mode = "file"
@@ -272,8 +331,14 @@ class ExcelManager(QObject):
             print(f"[DEBUG] Updated Excel hyperlink, original: {original_link}")
             print("[DEBUG] Excel file saved successfully")
 
-            # Update cache
-            self._hyperlink_cache[row_idx] = True
+            # Update cache (acquire lock)
+            self._cache_lock.lockForWrite()
+            try:
+                # Use 0-based indices for cache key
+                self._hyperlink_cache[(row_idx, col_idx_0_based)] = target_path
+                print(f"[DEBUG] Updated cache for ({row_idx}, {col_idx_0_based})")
+            finally:
+                self._cache_lock.unlock()
 
             return original_link
 
@@ -285,7 +350,7 @@ class ExcelManager(QObject):
         self,
         excel_file: str,
         sheet_name: str,
-        row_idx: int,
+        row_idx: int, # 0-based row index
         filter2_col: str,
         original_hyperlink: Optional[str],
         original_value: str,
@@ -314,16 +379,15 @@ class ExcelManager(QObject):
             wb = load_workbook(excel_file)
             ws = wb[sheet_name]
 
-            # Find the column index
-            header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
-            if filter2_col not in header:
+            # Find the column index (0-based) using helper
+            col_idx_0_based = self._get_column_index(excel_file, sheet_name, filter2_col)
+            if col_idx_0_based is None:
                 raise ValueError(f"Column '{filter2_col}' not found")
-            col_idx = header[filter2_col]
+            col_idx_1_based = col_idx_0_based + 1 # openpyxl uses 1-based index
 
             # Get the cell
-            cell = ws.cell(
-                row=row_idx + 2, column=col_idx
-            )  # +2 for header and 1-based index
+            excel_row_1_based = row_idx + 2 # +1 header, +1 for 1-based index
+            cell = ws.cell(row=excel_row_1_based, column=col_idx_1_based)
             print(
                 f"[DEBUG] Identified Excel cell: {cell.coordinate}, Current value: {cell.value}"
             )
@@ -335,7 +399,6 @@ class ExcelManager(QObject):
                     hyperlink = Hyperlink(
                         ref=cell.coordinate, target=original_hyperlink
                     )
-                    # For compatibility with different versions, try to add target_mode after constructor
                     hyperlink.target_mode = "file"
                     cell.hyperlink = hyperlink
                     print(
@@ -383,8 +446,19 @@ class ExcelManager(QObject):
             wb.save(excel_file)
             print("[DEBUG] Excel file saved successfully after reversion")
 
-            # Update cache
-            self._hyperlink_cache[row_idx] = original_hyperlink is not None
+            # Update cache (acquire lock)
+            self._cache_lock.lockForWrite()
+            try:
+                # Use 0-based indices for cache key
+                cache_key = (row_idx, col_idx_0_based)
+                if original_hyperlink:
+                    self._hyperlink_cache[cache_key] = original_hyperlink
+                    print(f"[DEBUG] Updated cache for {cache_key} with original link")
+                elif cache_key in self._hyperlink_cache:
+                    del self._hyperlink_cache[cache_key]
+                    print(f"[DEBUG] Removed cache entry for {cache_key}")
+            finally:
+                self._cache_lock.unlock()
 
             return True
 

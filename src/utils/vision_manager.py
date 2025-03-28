@@ -468,39 +468,55 @@ class VisionParserService:
                                 ].strip()
 
                     print(f"[DEBUG] Cleaned response for parsing: {cleaned_response}")
-                    result = json.loads(cleaned_response)
-                    print(
-                        f"[DEBUG] Successfully parsed JSON response: {json.dumps(result, indent=2)}"
-                    )
-                    return result
+                    parsed_data = json.loads(cleaned_response)
+
+                    # Ensure the result is a dictionary
+                    if isinstance(parsed_data, dict):
+                        print(
+                            f"[DEBUG] Successfully parsed JSON object: {json.dumps(parsed_data, indent=2)}"
+                        )
+                        return parsed_data
+                    elif isinstance(parsed_data, list):
+                        print(f"[WARN] API returned a JSON array, expected object: {parsed_data}")
+                        # Handle list case: maybe take the first element if it's a dict? Or return empty.
+                        if parsed_data and isinstance(parsed_data[0], dict):
+                            print("[DEBUG] Using the first dictionary found in the array.")
+                            return parsed_data[0]
+                        else:
+                            print("[DEBUG] Returning empty dictionary as API returned unexpected list format.")
+                            return {} # Return empty dict if list or list[0] is not dict
+                    else:
+                        print(f"[WARN] API returned unexpected JSON type: {type(parsed_data)}")
+                        return {} # Return empty dict for other unexpected types
+
                 except json.JSONDecodeError as e:
                     print(f"[DEBUG] Failed to parse JSON response: {response_text}")
                     print(f"[DEBUG] JSON parse error: {str(e)}")
-                    # Try to extract JSON from the response if it contains other text
+                    # Try to extract JSON object from the response if it contains other text
                     try:
-                        # Look for JSON object in the text
-                        json_match = re.search(
-                            r"({[^{}]*({[^{}]*})*[^{}]*})", response_text
-                        )
+                        # Look for JSON object pattern
+                        json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
                         if json_match:
-                            potential_json = json_match.group(1)
-                            print(
-                                f"[DEBUG] Trying to parse extracted JSON: {potential_json}"
-                            )
-                            result = json.loads(potential_json)
-                            print(
-                                f"[DEBUG] Successfully parsed extracted JSON: {json.dumps(result, indent=2)}"
-                            )
-                            return result
-                    except Exception as json_extract_error:
-                        print(
-                            f"[DEBUG] Failed to extract JSON from response: {str(json_extract_error)}"
-                        )
+                            potential_json = json_match.group(0)
+                            print(f"[DEBUG] Trying to parse extracted JSON: {potential_json}")
+                            parsed_data = json.loads(potential_json)
+                            if isinstance(parsed_data, dict):
+                                print(f"[DEBUG] Successfully parsed extracted JSON object: {json.dumps(parsed_data, indent=2)}")
+                                return parsed_data
+                            else:
+                                print(f"[WARN] Extracted JSON is not a dictionary: {type(parsed_data)}")
+                                return {} # Return empty dict if extracted JSON is not dict
+                        else:
+                            print("[DEBUG] No JSON object pattern found in response.")
+                            return {} # Return empty dict if no pattern found
 
-                    # If all parsing attempts fail, return empty object
-                    return {
-                        "supplier_name": None,
-                    }
+                    except Exception as json_extract_error:
+                        print(f"[DEBUG] Failed to extract/parse JSON from response: {str(json_extract_error)}")
+                        return {} # Return empty dict on extraction error
+
+                # Fallback if primary parsing and extraction fail
+                print("[DEBUG] Returning empty dictionary after parsing attempts failed.")
+                return {}
 
             except Exception as e:
                 print(f"[DEBUG] Error during Gemini API call: {str(e)}")

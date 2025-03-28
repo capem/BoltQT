@@ -174,18 +174,49 @@ class InitializationThread(QThread):
             # Initialize managers in the background thread
             self.progress_signal.emit(25, "Initializing configuration manager...")
             config_manager = ConfigManager()
+            config = config_manager.get_config() # Get config early for paths
 
             self.progress_signal.emit(35, "Initializing Excel manager...")
             excel_manager = ExcelManager()
+            # Initial load of excel data if configured
+            excel_file = config.get("excel_file")
+            excel_sheet = config.get("excel_sheet")
+            if excel_file and excel_sheet:
+                try:
+                    self.progress_signal.emit(38, "Loading initial Excel data...")
+                    excel_manager.load_excel_data(excel_file, excel_sheet)
+                except Exception as excel_load_err:
+                    print(f"[WARN] Initial Excel load failed: {excel_load_err}")
+                    # Don't block initialization, but log the warning
 
             self.progress_signal.emit(45, "Initializing PDF manager...")
             pdf_manager = PDFManager()
-            
+
             self.progress_signal.emit(48, "Initializing Vision manager...")
             vision_manager = VisionManager(config_manager)
 
+            # Preload hyperlinks if Excel data was loaded
+            if excel_manager.excel_data is not None and excel_file and excel_sheet:
+                self.progress_signal.emit(50, "Caching hyperlinks...")
+                try:
+                    # Define a callback to update progress (e.g., from 50% to 58%)
+                    def hyperlink_progress(percent: int):
+                        self.progress_signal.emit(50 + int(percent * 0.08), f"Caching hyperlinks ({percent}%)...")
+
+                    excel_manager.preload_hyperlinks_async(
+                        excel_file, excel_sheet, progress_callback=hyperlink_progress
+                    )
+                    self.progress_signal.emit(58, "Hyperlink caching complete.")
+                except Exception as cache_err:
+                    print(f"[WARN] Hyperlink caching failed: {cache_err}")
+                    # Log warning, don't block initialization
+                    self.progress_signal.emit(58, "Hyperlink caching failed (continuing).")
+            else:
+                # Skip caching progress if no Excel data
+                self.progress_signal.emit(58, "Skipping hyperlink caching (no Excel data).")
+
             # Signal that initialization is complete and pass the managers back
-            self.progress_signal.emit(50, "Initialization complete!")
+            self.progress_signal.emit(59, "Initialization complete!") # Adjusted percentage
             self.finished_signal.emit(config_manager, excel_manager, pdf_manager, vision_manager)
 
         except Exception as e:
