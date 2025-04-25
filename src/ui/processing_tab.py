@@ -26,6 +26,7 @@ from ..utils.processing_thread import ProcessingThread
 from .fuzzy_search import FuzzySearchFrame
 from .queue_display import QueueDisplay
 from .pdf_viewer import PDFViewer
+from .loading_overlay import LoadingOverlay
 
 
 # Create a signal relay object to safely pass signals from background threads to UI
@@ -79,6 +80,7 @@ class ProcessingTab(QWidget):
         self.current_pdf_start_time: Optional[datetime] = None
         self.filter_frames = []
         self._vision_mode = False  # Flag to indicate we're using vision results
+        self.loading_overlay: LoadingOverlay | None = None # Added for loading indicator
 
         # Initialize processing thread with managers
         self.processing_thread = ProcessingThread(
@@ -181,6 +183,9 @@ class ProcessingTab(QWidget):
         self.filters_layout.setContentsMargins(0, 0, 0, 0)  # Remove container margins
         self.filters_layout.setSpacing(6)  # Further reduce spacing between filters
         filters_layout.addWidget(self.filters_container)
+
+        # Create the loading overlay, parented to the filters container
+        self.loading_overlay = LoadingOverlay(self.filters_container)
 
         right_layout.addWidget(filters_frame)
 
@@ -1008,6 +1013,13 @@ class ProcessingTab(QWidget):
 
             print(f"[DEBUG] Starting vision preprocessing for {pdf_path}")
 
+            # --- Show Loading Overlay and Disable Filters ---
+            if self.loading_overlay:
+                self.loading_overlay.show()
+            for frame_info in self.filter_frames:
+                frame_info["fuzzy"].setEnabled(False)
+            QApplication.processEvents() # Ensure overlay and disabled state are visible
+
             # Create background thread for vision preprocessing
             from threading import Thread
 
@@ -1058,6 +1070,15 @@ class ProcessingTab(QWidget):
         separate from the actual PDF processing tasks.
         """
         try:
+            # --- Hide Loading Overlay and Re-enable Filters ---
+            # This runs when the signal arrives, regardless of success/failure in the thread
+            if self.loading_overlay:
+                self.loading_overlay.hide()
+            for frame_info in self.filter_frames:
+                 # Re-enable all filters. Subsequent logic might disable some based on selections.
+                frame_info["fuzzy"].setEnabled(True)
+            QApplication.processEvents() # Ensure UI updates
+
             print(f"[DEBUG] Vision preprocessing result ready for {pdf_path}")
 
             # Check if this is still the current PDF
