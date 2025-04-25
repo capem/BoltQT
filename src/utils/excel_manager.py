@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import Dict, Optional, Tuple, List, Any, Callable
-import os
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.worksheet.hyperlink import Hyperlink
@@ -92,7 +91,7 @@ class ExcelManager(QObject):
                 )
             except OSError:
                 print(
-                    f"[DEBUG] Failed to read with normalized path, trying original path"
+                    "[DEBUG] Failed to read with normalized path, trying original path"
                 )
                 # If normalized path fails, try the original path
                 self.excel_data = pd.read_excel(
