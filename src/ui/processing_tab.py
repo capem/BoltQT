@@ -76,6 +76,7 @@ class ProcessingTab(QWidget):
         # Initialize state
         self._pending_config_change_id = None
         self._is_reloading = False
+        self._is_applying_config = False  # Flag to prevent concurrent config changes
         self.current_pdf: Optional[str] = None
         self.current_pdf_start_time: Optional[datetime] = None
         self.filter_frames = []
@@ -349,10 +350,26 @@ class ProcessingTab(QWidget):
         """Setup filter controls based on configuration."""
         config = self.config_manager.get_config()
 
-        # Clear existing filters
+        # First, remove the stretch at the end if it exists
+        # This prevents duplicate stretches when rebuilding filters
+        for i in range(self.filters_layout.count()):
+            item = self.filters_layout.itemAt(i)
+            if item and item.spacerItem():
+                # Found a stretch item, remove it
+                self.filters_layout.removeItem(item)
+                break
+
+        # Clear existing filters - ensure proper cleanup
         for frame in self.filter_frames:
+            # Remove from layout first
+            self.filters_layout.removeWidget(frame["frame"])
+            # Then delete the widget
+            frame["frame"].setParent(None)
             frame["frame"].deleteLater()
         self.filter_frames.clear()
+
+        # Process events to ensure widgets are properly removed
+        QApplication.processEvents()
 
         # Create new filters
         i = 1
@@ -1307,12 +1324,17 @@ class ProcessingTab(QWidget):
 
     def _on_config_change(self) -> None:
         """Handle configuration changes."""
+        # If we're already applying a config change, don't schedule another one
+        if self._is_applying_config:
+            print("[DEBUG] Config change requested while already applying changes - ignoring")
+            return
+
         # Cancel any pending operation
         if self._pending_config_change_id is not None:
             self._update_timer.stop()
             self._pending_config_change_id = None
 
-        # Schedule the change
+        # Schedule the change with a delay to debounce multiple rapid changes
         self._pending_config_change_id = self._update_timer.singleShot(
             250,  # 250ms delay
             self._apply_config_change,
@@ -1320,61 +1342,75 @@ class ProcessingTab(QWidget):
 
     def _apply_config_change(self) -> None:
         """Apply configuration changes."""
+        # Reset pending change ID
         self._pending_config_change_id = None
+
+        # Set flag to prevent concurrent config changes
+        self._is_applying_config = True
         print("[DEBUG] Applying configuration changes...")
 
-        # Store old config values for comparison
-        old_excel_file = self.excel_manager._last_file
-        old_excel_sheet = self.excel_manager._last_sheet
+        try:
+            # Store old config values for comparison
+            old_excel_file = self.excel_manager._last_file
+            old_excel_sheet = self.excel_manager._last_sheet
 
-        # Get new config
-        config = self.config_manager.get_config()
-        new_excel_file = config.get("excel_file")
-        new_excel_sheet = config.get("excel_sheet")
+            # Get new config
+            config = self.config_manager.get_config()
+            new_excel_file = config.get("excel_file")
+            new_excel_sheet = config.get("excel_sheet")
 
-        # Update vision button enabled state
-        vision_enabled = config.get("vision", {}).get("enabled", False)
-        self.vision_button.setEnabled(vision_enabled)
-        if not vision_enabled:
-            self.vision_button.setToolTip(
-                "Vision processing is disabled in configuration"
-            )
-        else:
-            self.vision_button.setToolTip(
-                "Manually run vision processing on current PDF"
-            )
-
-        # Check if Excel file or sheet changed
-        excel_changed = (
-            new_excel_file != old_excel_file or new_excel_sheet != old_excel_sheet
-        )
-
-        # Reload Excel data and refresh hyperlink cache if changed
-        if excel_changed and new_excel_file and new_excel_sheet:
-            print("[DEBUG] Excel configuration changed, reloading data and cache...")
-            self._update_status("Reloading Excel data and cache...")
-            try:
-                # Force reload of data
-                self.excel_manager.load_excel_data(
-                    new_excel_file, new_excel_sheet, force_reload=True
+            # Update vision button enabled state
+            vision_enabled = config.get("vision", {}).get("enabled", False)
+            self.vision_button.setEnabled(vision_enabled)
+            if not vision_enabled:
+                self.vision_button.setToolTip(
+                    "Vision processing is disabled in configuration"
                 )
-                # Refresh hyperlink cache (this might take time)
-                # Consider running this in a thread if it blocks UI
-                self.excel_manager.refresh_hyperlink_cache(
-                    new_excel_file, new_excel_sheet
+            else:
+                self.vision_button.setToolTip(
+                    "Manually run vision processing on current PDF"
                 )
-                self._update_status("Excel data and cache reloaded.")
-            except Exception as e:
-                self._handle_error(e, "reloading Excel data after config change")
-                self._update_status("Error reloading Excel data.")
-        elif excel_changed:
-            # Excel config removed or incomplete, clear data
-            print("[DEBUG] Excel configuration removed or incomplete, clearing data.")
-            self.excel_manager.clear_caches()
 
-        # Always rebuild filters and try loading next PDF
-        self._setup_filters()
-        self._load_next_pdf()
+            # Check if Excel file or sheet changed
+            excel_changed = (
+                new_excel_file != old_excel_file or new_excel_sheet != old_excel_sheet
+            )
+
+            # Reload Excel data and refresh hyperlink cache if changed
+            if excel_changed and new_excel_file and new_excel_sheet:
+                print("[DEBUG] Excel configuration changed, reloading data and cache...")
+                self._update_status("Reloading Excel data and cache...")
+                try:
+                    # Force reload of data
+                    self.excel_manager.load_excel_data(
+                        new_excel_file, new_excel_sheet, force_reload=True
+                    )
+                    # Refresh hyperlink cache (this might take time)
+                    # Consider running this in a thread if it blocks UI
+                    self.excel_manager.refresh_hyperlink_cache(
+                        new_excel_file, new_excel_sheet
+                    )
+                    self._update_status("Excel data and cache reloaded.")
+                except Exception as e:
+                    self._handle_error(e, "reloading Excel data after config change")
+                    self._update_status("Error reloading Excel data.")
+            elif excel_changed:
+                # Excel config removed or incomplete, clear data
+                print("[DEBUG] Excel configuration removed or incomplete, clearing data.")
+                self.excel_manager.clear_caches()
+
+            # Always rebuild filters and try loading next PDF
+            self._setup_filters()
+            self._load_next_pdf()
+
+        except Exception as e:
+            # Handle any errors during config change
+            self._handle_error(e, "applying configuration changes")
+            print(f"[DEBUG] Error during config change: {str(e)}")
+        finally:
+            # Always reset the flag when done, even if an error occurred
+            self._is_applying_config = False
+            print("[DEBUG] Configuration change completed")
 
     def closeEvent(self, event: Any) -> None:
         """Handle tab closure."""
@@ -1458,8 +1494,9 @@ class ProcessingTab(QWidget):
         try:
             self._update_status("Running vision preprocessing...")
 
-            # Clear all filters before applying new vision results
-            self.filter_frames.clear()
+            # Clear filter values but don't clear the filter_frames list itself
+            for frame in self.filter_frames:
+                frame["fuzzy"].clear()
 
             # Start vision processing and wait for results
             self._start_vision_processing(self.current_pdf)
