@@ -435,7 +435,7 @@ class ConfigTab(QWidget):
         # Enabled checkbox
         self.vision_enabled_checkbox = QCheckBox("Enable Vision Processing")
         self.vision_enabled_checkbox.setToolTip(
-            "Enable automatic document recognition and field population"
+            "Enable automatic document recognition and field auto-population"
         )
         grid.addWidget(self.vision_enabled_checkbox, 0, 0, 1, 2)
 
@@ -464,13 +464,6 @@ class ConfigTab(QWidget):
             ["gemini-2.0-flash", "gemini-2.5-pro-exp-03-25"]
         )
         grid.addWidget(self.vision_model_combo, 3, 1)
-
-        # Auto-populate checkbox
-        self.vision_auto_populate_checkbox = QCheckBox("Auto-populate Fields")
-        self.vision_auto_populate_checkbox.setToolTip(
-            "Automatically populate filter fields using vision results"
-        )
-        grid.addWidget(self.vision_auto_populate_checkbox, 4, 0, 1, 2)
 
         # Vision settings - condensed into main preset
         preset_vision_frame = QFrame()
