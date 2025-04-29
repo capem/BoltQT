@@ -405,7 +405,7 @@ class VisionParserService:
                 files = [self.client.files.upload(file=image_path)]
                 print(f"[DEBUG] File uploaded successfully: {files[0].uri}")
 
-                # Create content with image and prompt
+                # Create content structure that works with the API
                 contents = [
                     types.Content(
                         role="user",
@@ -414,7 +414,15 @@ class VisionParserService:
                                 file_uri=files[0].uri,
                                 mime_type=files[0].mime_type,
                             ),
-                            types.Part.from_text(text=prompt),
+                            types.Part.from_text(text=f"{prompt}\n\nReturn ONLY a JSON object with these fields as keys. If any field is not found in the image, set its value to null."),
+                        ],
+                    ),
+                    # Remove the empty model parts that's causing the error
+                    # Add a second user message to trigger the response
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_text(text="Please extract the information as valid JSON only"),
                         ],
                     ),
                 ]
@@ -424,26 +432,36 @@ class VisionParserService:
                 vision_config = config.get("vision", {})
                 model = vision_config.get("model", "gemini-2.0-flash")
 
-                # Configure the generation parameters
+                # Configure exactly as in the Google example
                 generate_config = types.GenerateContentConfig(
-                    temperature=0.5,  # Lower temperature for more focused extraction
-                    top_p=0.95,
-                    top_k=40,
-                    max_output_tokens=8192,
                     response_mime_type="application/json",
                 )
 
-                # Process the image with streaming
-                response_text = ""
+                # Use non-streaming API
                 print(f"[DEBUG] Calling Gemini API with model: {model}")
+                response_text = ""
 
-                for chunk in self.client.models.generate_content_stream(
-                    model=model,
-                    contents=contents,
-                    config=generate_config,
-                ):
-                    response_text += chunk.text
-                    print("[DEBUG] Received text chunk from API")
+                try:
+                    # Use non-streaming generate_content method
+                    print("[DEBUG] Making non-streaming API call")
+                    response = self.client.models.generate_content(
+                        model=model,
+                        contents=contents,
+                        config=generate_config,
+                    )
+                    response_text = response.text
+                    print("[DEBUG] API call successful")
+
+                except Exception as api_error:
+                    print(f"[DEBUG] API call failed: {str(api_error)}")
+                    import traceback
+                    print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+                    return {}
+
+                # If we got here with empty response_text, all attempts failed
+                if not response_text:
+                    print("[DEBUG] No response text received after all attempts")
+                    return {}
 
                 print(f"[DEBUG] Full API response: {response_text}")
 
@@ -451,7 +469,8 @@ class VisionParserService:
                 try:
                     # Clean the response text before parsing
                     cleaned_response = response_text.strip()
-                    # Remove ```json and ``` markers if present
+
+                    # Remove ```json and ``` markers if present (common in LLM responses)
                     if cleaned_response.startswith("```"):
                         # Find the first newline to skip the ```json line
                         first_newline = cleaned_response.find("\n")
@@ -468,7 +487,47 @@ class VisionParserService:
                                 ].strip()
 
                     print(f"[DEBUG] Cleaned response for parsing: {cleaned_response}")
-                    parsed_data = json.loads(cleaned_response)
+
+                    # Try multiple parsing approaches
+                    parsed_data = None
+                    parsing_errors = []
+
+                    # Approach 1: Direct JSON parsing
+                    try:
+                        parsed_data = json.loads(cleaned_response)
+                        print("[DEBUG] Successfully parsed JSON directly")
+                    except json.JSONDecodeError as e:
+                        parsing_errors.append(f"Direct parsing error: {str(e)}")
+
+                        # Approach 2: Try to fix common JSON issues
+                        try:
+                            # Sometimes the response has unescaped newlines or other characters in strings
+                            # Try to fix by replacing single quotes with double quotes (if that's the issue)
+                            if "'" in cleaned_response and '"' not in cleaned_response:
+                                fixed_json = cleaned_response.replace("'", '"')
+                                parsed_data = json.loads(fixed_json)
+                                print("[DEBUG] Successfully parsed JSON after replacing single quotes")
+                        except json.JSONDecodeError as e:
+                            parsing_errors.append(f"Quote replacement parsing error: {str(e)}")
+
+                            # Approach 3: Extract JSON object using regex
+                            try:
+                                json_match = re.search(r"\{.*\}", cleaned_response, re.DOTALL)
+                                if json_match:
+                                    potential_json = json_match.group(0)
+                                    print(f"[DEBUG] Trying to parse extracted JSON: {potential_json}")
+                                    parsed_data = json.loads(potential_json)
+                                    print("[DEBUG] Successfully parsed JSON using regex extraction")
+                                else:
+                                    parsing_errors.append("No JSON object pattern found in response")
+                            except Exception as regex_error:
+                                parsing_errors.append(f"Regex extraction error: {str(regex_error)}")
+
+                    # If all parsing attempts failed
+                    if parsed_data is None:
+                        print(f"[DEBUG] All JSON parsing attempts failed: {', '.join(parsing_errors)}")
+                        print("[DEBUG] Returning empty dictionary")
+                        return {}
 
                     # Ensure the result is a dictionary
                     if isinstance(parsed_data, dict):
@@ -478,45 +537,22 @@ class VisionParserService:
                         return parsed_data
                     elif isinstance(parsed_data, list):
                         print(f"[WARN] API returned a JSON array, expected object: {parsed_data}")
-                        # Handle list case: maybe take the first element if it's a dict? Or return empty.
+                        # Handle list case: take the first element if it's a dict
                         if parsed_data and isinstance(parsed_data[0], dict):
                             print("[DEBUG] Using the first dictionary found in the array.")
                             return parsed_data[0]
                         else:
                             print("[DEBUG] Returning empty dictionary as API returned unexpected list format.")
-                            return {} # Return empty dict if list or list[0] is not dict
+                            return {}  # Return empty dict if list or list[0] is not dict
                     else:
                         print(f"[WARN] API returned unexpected JSON type: {type(parsed_data)}")
-                        return {} # Return empty dict for other unexpected types
+                        return {}  # Return empty dict for other unexpected types
 
-                except json.JSONDecodeError as e:
-                    print(f"[DEBUG] Failed to parse JSON response: {response_text}")
-                    print(f"[DEBUG] JSON parse error: {str(e)}")
-                    # Try to extract JSON object from the response if it contains other text
-                    try:
-                        # Look for JSON object pattern
-                        json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
-                        if json_match:
-                            potential_json = json_match.group(0)
-                            print(f"[DEBUG] Trying to parse extracted JSON: {potential_json}")
-                            parsed_data = json.loads(potential_json)
-                            if isinstance(parsed_data, dict):
-                                print(f"[DEBUG] Successfully parsed extracted JSON object: {json.dumps(parsed_data, indent=2)}")
-                                return parsed_data
-                            else:
-                                print(f"[WARN] Extracted JSON is not a dictionary: {type(parsed_data)}")
-                                return {} # Return empty dict if extracted JSON is not dict
-                        else:
-                            print("[DEBUG] No JSON object pattern found in response.")
-                            return {} # Return empty dict if no pattern found
-
-                    except Exception as json_extract_error:
-                        print(f"[DEBUG] Failed to extract/parse JSON from response: {str(json_extract_error)}")
-                        return {} # Return empty dict on extraction error
-
-                # Fallback if primary parsing and extraction fail
-                print("[DEBUG] Returning empty dictionary after parsing attempts failed.")
-                return {}
+                except Exception as e:
+                    print(f"[DEBUG] Unexpected error during JSON parsing: {str(e)}")
+                    import traceback
+                    print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+                    return {}  # Return empty dict on any unexpected error
 
             except Exception as e:
                 print(f"[DEBUG] Error during Gemini API call: {str(e)}")
