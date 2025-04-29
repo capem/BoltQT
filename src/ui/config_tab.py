@@ -157,6 +157,14 @@ class ConfigTab(QWidget):
         browse_btn.clicked.connect(lambda: self._browse_folder("processed_folder"))
         grid.addWidget(browse_btn, 1, 2)
 
+        # Skip folder
+        grid.addWidget(QLabel("Skip Folder:"), 2, 0)
+        self.skip_folder_entry = QLineEdit()
+        grid.addWidget(self.skip_folder_entry, 2, 1)
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(lambda: self._browse_folder("skip_folder"))
+        grid.addWidget(browse_btn, 2, 2)
+
         parent_layout.addWidget(frame)
 
     def _add_excel_section(self, parent_layout: QVBoxLayout) -> None:
@@ -541,6 +549,7 @@ class ConfigTab(QWidget):
             # Update entry fields
             self.source_folder_entry.setText(config.get("source_folder", ""))
             self.processed_folder_entry.setText(config.get("processed_folder", ""))
+            self.skip_folder_entry.setText(config.get("skip_folder", ""))
 
             # Set excel file
             excel_path = config.get("excel_file", "")
@@ -729,6 +738,7 @@ class ConfigTab(QWidget):
             config = {
                 "source_folder": self.source_folder_entry.text(),
                 "processed_folder": self.processed_folder_entry.text(),
+                "skip_folder": self.skip_folder_entry.text(),
                 "excel_file": self.excel_file_entry.text(),
                 "excel_sheet": self.excel_sheet_combo.currentText(),
                 "output_template": self.output_template_entry.text(),

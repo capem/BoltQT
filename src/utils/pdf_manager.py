@@ -7,7 +7,7 @@ from .models import PDFTask
 from .template_manager import TemplateManager
 from datetime import datetime
 from .path_utils import normalize_path, is_same_path
-
+import time
 
 class PDFManager:
     """Manages PDF file operations."""
@@ -548,7 +548,7 @@ class PDFManager:
         Returns:
             bool: True if file is accessible, False otherwise
         """
-        import time
+
 
         # If this is the current tracked file, stop tracking it
         if self._paths_equal(file_path, self._current_path):
@@ -557,6 +557,12 @@ class PDFManager:
         # Try to verify file is accessible
         for attempt in range(max_attempts):
             try:
+                # First try to check if the file exists
+                if not os.path.exists(file_path):
+                    print(f"[DEBUG] File does not exist: {file_path}")
+                    return True  # Consider non-existent files as "released"
+
+                # Try to open the file to check if it's accessible
                 with open(file_path, "rb") as _:
                     print(f"[DEBUG] Verified file is accessible: {file_path}")
                     return True
@@ -574,6 +580,100 @@ class PDFManager:
                 return True  # Consider non-existent files as "released"
             except Exception as e:
                 print(f"[DEBUG] Error checking file: {str(e)}")
+                if attempt < max_attempts - 1:
+                    time.sleep(0.5)
+                    continue
                 return False
 
         return False
+
+    def move_skipped_pdf_to_folder_refactored(self, source_path: str, skip_folder: str) -> Optional[str]:
+        """Moves a skipped PDF to the skip folder with timestamping, handling potential locks and retrying.
+
+        Uses a copy-then-delete approach for potentially better cross-device compatibility.
+
+        Args:
+            source_path: Path to the source PDF file.
+            skip_folder: Destination folder for skipped files.
+
+        Returns:
+            The path to the moved file in the skip folder if successful.
+            None if the operation failed due to invalid input, file locks,
+            or errors during copy/delete after retries.
+        """
+        # --- 1. Input Validation ---
+        if not source_path or not os.path.isfile(source_path):
+            print(f"[DEBUG] Invalid or missing source file: {source_path}")
+            return None
+        if not skip_folder:
+            print("[DEBUG] Missing skip folder path.")
+            return None
+
+        # --- 2. Ensure File is Released ---
+        # Attempts to ensure the file is not locked before proceeding.
+        if not self._ensure_file_released(source_path, max_attempts=5):
+            print(f"[DEBUG] File appears locked after checks, cannot move: {source_path}")
+            return None # Cannot proceed if file is locked
+
+        # --- 3. Prepare Target Path ---
+        try:
+            # Ensure the destination directory exists.
+            os.makedirs(skip_folder, exist_ok=True)
+
+            # Construct the new filename with a timestamp.
+            base_name = os.path.basename(source_path)
+            name, ext = os.path.splitext(base_name)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Creates a unique name like 'original_skipped_20230101_120000.pdf'
+            target_path = os.path.join(skip_folder, f"{name}_skipped_{timestamp}{ext}")
+
+        except Exception as path_e:
+            # Handle potential errors during path creation (e.g., permissions).
+            print(f"[DEBUG] Error preparing target path or directory: {str(path_e)}")
+            return None
+
+        # --- 4. Attempt Copy and Delete with Retries ---
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            copied = False
+            try:
+                # --- 4a. Copy File ---
+                print(f"[DEBUG] Attempt {attempt + 1}/{max_attempts}: Copying '{source_path}' to '{target_path}'")
+                shutil.copy2(source_path, target_path) # copy2 preserves metadata
+                copied = True
+                print("[DEBUG] Copy successful.")
+
+                # --- 4b. Delete Original File ---
+                print(f"[DEBUG] Attempt {attempt + 1}/{max_attempts}: Removing original file '{source_path}'")
+                os.remove(source_path)
+                print("[DEBUG] Original file removed successfully.")
+
+                # --- Success Case ---
+                # If both copy and delete succeed, mark the *new* file as processed and return its path.
+                self.mark_file_processed(target_path)
+                print(f"[INFO] Successfully moved skipped PDF to: {target_path}")
+                return target_path # Operation complete
+
+            except Exception as e:
+                print(f"[DEBUG] Attempt {attempt + 1}/{max_attempts} failed: {str(e)}")
+
+                # --- Cleanup on Failure ---
+                # If copy succeeded but delete failed, try to remove the copied file to avoid duplicates.
+                if copied and os.path.exists(target_path):
+                    try:
+                        print(f"[DEBUG] Deletion of original failed, cleaning up copied file: {target_path}")
+                        os.remove(target_path)
+                        print("[DEBUG] Cleanup successful.")
+                    except Exception as cleanup_e:
+                        # Log if cleanup fails, but proceed to retry/fail the main operation.
+                        print(f"[WARNING] Failed to clean up copied file '{target_path}' after error: {str(cleanup_e)}")
+
+                # --- Retry Logic ---
+                if attempt < max_attempts - 1:
+                    print("[DEBUG] Retrying in 0.5 seconds...")
+                    time.sleep(0.5)
+                    # Loop continues to the next attempt
+                else:
+                    # All attempts failed.
+                    print(f"[ERROR] Failed to move file '{source_path}' after {max_attempts} attempts.")
+                    return None # Exit after last attempt

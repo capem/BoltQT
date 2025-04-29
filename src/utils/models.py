@@ -23,6 +23,7 @@ class PDFTask:
         None  # Path where the PDF was moved after processing
     )
     rotation_angle: int = 0
+    skip_type: str = "in_place"  # 'in_place' (default) or 'to_folder'
 
     @staticmethod
     def generate_id() -> str:

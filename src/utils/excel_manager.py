@@ -190,7 +190,7 @@ class ExcelManager(QObject):
                             cache_key = (row_idx, col_idx)
                             self._hyperlink_cache[cache_key] = target
                             # --- Add Debug Print ---
-                            print(f"[DEBUG PRELOAD] Added to cache: key={cache_key}, target='{target}'")
+                            # print(f"[DEBUG PRELOAD] Added to cache: key={cache_key}, target='{target}'")
                             # --- End Debug Print ---
                         except Exception as link_err:
                             print(f"[DEBUG] Error reading hyperlink at ({row_idx}, {col_idx}): {str(link_err)}")

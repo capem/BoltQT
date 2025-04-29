@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QHBoxLayout,
     QSizePolicy,
+    QMenu,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 
@@ -226,13 +227,18 @@ class ProcessingTab(QWidget):
         """)
         actions_layout.addWidget(self.process_button)
 
-        # Skip button
+        # Skip button with dropdown menu
         self.skip_button = QPushButton("Skip File")
-        self.skip_button.clicked.connect(lambda: self._load_next_pdf(skip=True))
         self.skip_button.setStyleSheet("min-height: 22px; padding: 2px 8px;")
         self.skip_button.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
+        skip_menu = QMenu(self.skip_button)
+        skip_in_place_action = skip_menu.addAction("Skip (Keep in Place)")
+        skip_to_folder_action = skip_menu.addAction("Skip to Folder")
+        skip_in_place_action.triggered.connect(lambda: self._skip_current_file("in_place"))
+        skip_to_folder_action.triggered.connect(lambda: self._skip_current_file("to_folder"))
+        self.skip_button.setMenu(skip_menu)
         actions_layout.addWidget(self.skip_button)
 
         # Vision button - For manual vision processing
@@ -899,6 +905,83 @@ class ProcessingTab(QWidget):
             self.file_info_label.setText("No file loaded")
             self.file_info_label.setToolTip("")
 
+    def _skip_current_file(self, skip_type: str) -> None:
+        """Skip the current file using the selected skip type."""
+        if not self.current_pdf:
+            self._update_status("No file selected to skip")
+            return
+
+        # Store current PDF path before clearing it
+        current_pdf_path = self.current_pdf
+        current_pdf_start_time = self.current_pdf_start_time or datetime.now()
+
+        # First clear the PDF from the viewer to release file handles
+        print(f"[DEBUG] Clearing PDF viewer before skipping file: {current_pdf_path}")
+        self.pdf_viewer.clear_pdf()
+
+        # Reset state variables
+        self.current_pdf = None
+        self.current_pdf_start_time = None
+        self._update_file_info_label()
+
+        # Process events to ensure file handles are released
+        QApplication.processEvents()
+
+        # Now handle the skip operation
+        config = self.config_manager.get_config()
+        skipped_path = current_pdf_path
+
+        if skip_type == "to_folder":
+            skip_folder = config.get("skip_folder", "")
+            if not skip_folder:
+                QMessageBox.warning(self, "Skip Folder Not Set", "No skip folder is configured in settings.")
+                return
+
+            print(f"[DEBUG] Attempting to move skipped PDF to folder: {skip_folder}")
+            # Try to move the file
+            result = self.pdf_manager.move_skipped_pdf_to_folder(current_pdf_path, skip_folder)
+
+            if result is None:
+                # Failed to move the file - create a failed task instead of a skipped task
+                print(f"[DEBUG] Failed to move file to skip folder: {current_pdf_path}")
+                self._update_status("Failed to move file to skip folder. File marked as failed.")
+
+                # Create failed task
+                task = PDFTask(
+                    pdf_path=current_pdf_path,
+                    status="failed",
+                    start_time=current_pdf_start_time,
+                    end_time=datetime.now(),
+                    error_msg="Could not move file to skip folder - file may be locked",
+                )
+                self.processing_thread.tasks[task.task_id] = task
+
+                # Load next PDF and return
+                self._load_next_pdf()
+                return
+
+            # If we get here, the move was successful
+            skipped_path = result
+            print(f"[DEBUG] Successfully moved file to skip folder: {skipped_path}")
+            self._update_status("File skipped and moved to skip folder.")
+        else:
+            # For in-place skipping, just mark the file as processed
+            print(f"[DEBUG] Skipping file in place: {current_pdf_path}")
+            self.pdf_manager.mark_file_processed(current_pdf_path)
+
+        # Create skipped task for tracking
+        task = PDFTask(
+            pdf_path=skipped_path,
+            status="skipped",
+            start_time=current_pdf_start_time,
+            end_time=datetime.now(),
+            skip_type=skip_type,
+        )
+        self.processing_thread.tasks[task.task_id] = task
+
+        # Load next PDF
+        self._load_next_pdf()
+
     def _load_next_pdf(self, skip: bool = False) -> None:
         """Load the next PDF file and optionally start vision preprocessing.
 
@@ -907,21 +990,8 @@ class ProcessingTab(QWidget):
         """
         try:
             print(
-                f"[DEBUG] _load_next_pdf called with skip={skip}, current_pdf={self.current_pdf}"
+                f"[DEBUG] _load_next_pdf called, current_pdf={self.current_pdf}"
             )
-
-            # Handle skipped files first
-            if skip and self.current_pdf:
-                # Create skipped task
-                task = PDFTask(
-                    pdf_path=self.current_pdf,
-                    status="skipped",
-                    start_time=self.current_pdf_start_time or datetime.now(),
-                    end_time=datetime.now(),
-                )
-                self.processing_thread.tasks[task.task_id] = task
-                self.pdf_manager.mark_file_processed(self.current_pdf)
-
             # Ensure proper cleanup of current PDF
             if self.current_pdf:
                 try:

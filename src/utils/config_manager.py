@@ -21,6 +21,7 @@ class ConfigManager(QObject):
             "excel_file": "",
             "excel_sheet": "",
             "processed_folder": "",
+            "skip_folder": "",  # New: folder for skipped files
             "output_template": "",
             "filter1_column": "",
             "filter2_column": "",

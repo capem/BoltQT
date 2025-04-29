@@ -438,6 +438,7 @@ class PDFViewer(QWidget):
                 self.doc = None
 
             # Clear references
+            current_path = self.current_pdf
             self.current_pdf = None
             self.current_page = 0
             self.total_pages = 0
@@ -452,6 +453,12 @@ class PDFViewer(QWidget):
             # Update UI
             self._update_page_indicator()
             self._update_ui_state(False)
+
+            # Notify the PDF manager that we've released this file
+            if self.pdf_manager and current_path:
+                self.pdf_manager.close_current_pdf()
+
+            print(f"[DEBUG] PDF cleared and resources released: {current_path}")
 
         except Exception as e:
             print(f"[DEBUG] Error during PDF cleanup: {str(e)}")
