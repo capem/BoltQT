@@ -878,8 +878,23 @@ class ProcessingTab(QWidget):
             self.file_info_label.setText(f"File: {file_name}")
             # Set tooltip to show full path on hover
             self.file_info_label.setToolTip(file_path)
-            # Force the label to adjust to the available width
-            QTimer.singleShot(0, self.file_info_label.adjustSize)
+
+            # Force the label to update its size and layout
+            def update_layout():
+                # First adjust the label's size
+                self.file_info_label.adjustSize()
+                # Then force the parent layout to update
+                parent_layout = self.file_info_label.parent().layout()
+                if parent_layout:
+                    parent_layout.activate()
+                    parent_layout.update()
+                # Also update the parent widget
+                self.file_info_label.parent().adjustSize()
+                # Process events to ensure UI updates immediately
+                QApplication.processEvents()
+
+            # Use a timer to ensure this happens after the current event cycle
+            QTimer.singleShot(0, update_layout)
         else:
             self.file_info_label.setText("No file loaded")
             self.file_info_label.setToolTip("")
