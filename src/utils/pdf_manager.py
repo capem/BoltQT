@@ -365,16 +365,16 @@ class PDFManager:
                         print(f"[DEBUG] Error storing rotation metadata: {str(e)}")
                         # Continue even if metadata storage fails
 
-                # Move to final location
+                # Move to final location with versioning
                 try:
-                    # Make a regular copy to handle cross-device links
-                    shutil.copy2(source_path, output_path)
+                    # Use our versioning method to handle existing files
+                    final_path = self.move_pdf_with_versioning(source_path, output_path)
                     print(
-                        f"[DEBUG] Successfully copied PDF to final location: {output_path}"
+                        f"[DEBUG] Successfully moved PDF to final location: {final_path}"
                     )
 
                     # Set the processed location in the task
-                    task.processed_pdf_location = output_path
+                    task.processed_pdf_location = final_path
 
                     # Remove the original file from the source folder
                     try:
@@ -468,6 +468,75 @@ class PDFManager:
         except Exception as e:
             print(f"[DEBUG] Error reverting PDF: {str(e)}")
             return False
+
+    def move_pdf_with_versioning(self, source_path: str, target_path: str) -> str:
+        """Move a PDF file to a target path, handling existing files by versioning.
+
+        If a file already exists at the target path, it will be renamed with an 'old_' prefix
+        and a timestamp before the new file is moved to the target location.
+        This allows for maintaining multiple versions of the same file.
+
+        Args:
+            source_path: Path to the source PDF file
+            target_path: Destination path where the file should be moved
+
+        Returns:
+            str: The final path of the moved file
+
+        Raises:
+            FileNotFoundError: If the source file doesn't exist
+            ValueError: If the file cannot be moved
+        """
+        try:
+            from datetime import datetime
+
+            # Normalize paths
+            source_path = normalize_path(source_path)
+            target_path = normalize_path(target_path)
+
+            # Check if source file exists
+            if not os.path.exists(source_path):
+                print(f"[DEBUG] Source file not found: {source_path}")
+                raise FileNotFoundError(f"Source file not found: {source_path}")
+
+            # Ensure target directory exists
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
+            # Check if target file already exists
+            if os.path.exists(target_path):
+                print(f"[DEBUG] Target file already exists: {target_path}")
+
+                # Get directory and filename components
+                target_dir = os.path.dirname(target_path)
+                target_filename = os.path.basename(target_path)
+
+                # Get file name and extension separately
+                filename_parts = os.path.splitext(target_filename)
+                base_name = filename_parts[0]
+                extension = filename_parts[1] if len(filename_parts) > 1 else ""
+
+                # Create versioned filename with 'old_' prefix and timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                old_filename = f"old_{timestamp}_{base_name}{extension}"
+                old_path = os.path.join(target_dir, old_filename)
+
+                # Rename the existing file - with timestamp, we don't need to check for existing old versions
+                try:
+                    shutil.move(target_path, old_path)
+                    print(f"[DEBUG] Renamed existing file to: {old_path}")
+                except Exception as e:
+                    print(f"[DEBUG] Error renaming existing file: {str(e)}")
+                    # Continue anyway - we'll try to copy the new file
+
+            # Copy the new file to the target location
+            shutil.copy2(source_path, target_path)
+            print(f"[DEBUG] Successfully copied file to: {target_path}")
+
+            return target_path
+
+        except Exception as e:
+            print(f"[DEBUG] Error in move_pdf_with_versioning: {str(e)}")
+            raise ValueError(f"Failed to move PDF file: {str(e)}")
 
     def _ensure_file_released(self, file_path: str, max_attempts: int = 3) -> bool:
         """Check if a file is accessible and not locked.
