@@ -587,7 +587,7 @@ class PDFManager:
 
         return False
 
-    def move_skipped_pdf_to_folder_refactored(self, source_path: str, skip_folder: str) -> Optional[str]:
+    def move_skipped_pdf_to_folder(self, source_path: str, skip_folder: str) -> Optional[str]:
         """Moves a skipped PDF to the skip folder with timestamping, handling potential locks and retrying.
 
         Uses a copy-then-delete approach for potentially better cross-device compatibility.
