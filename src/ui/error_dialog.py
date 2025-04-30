@@ -12,6 +12,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QPixmap
 from typing import Optional
 
+from ..utils.logger import get_logger
+
 
 class MacErrorDialog(QDialog):
     """Custom Mac-style error dialog."""
@@ -110,6 +112,12 @@ def show_error(
         error: The exception that was raised.
         is_modal: If True, dialog blocks until dismissed. If False, dialog is non-modal.
     """
+    # Log the error
+    logger = get_logger()
+    error_msg = f"Error {context}: {str(error)}"
+    logger.error(error_msg)
+
+    # Create and show the dialog
     dialog = MacErrorDialog(
         parent, "Error", f"Error {context}:\n{str(error)}", is_modal=is_modal
     )
@@ -126,6 +134,13 @@ def show_warning(parent: Optional[QWidget], context: str, message: str) -> None:
         context: Context where the warning occurred.
         message: Warning message to display.
     """
-    dialog = MacErrorDialog(
+    # Log the warning
+    logger = get_logger()
+    warning_msg = f"Warning {context}: {message}"
+    logger.warning(warning_msg)
+
+    # Create and show the dialog (no need to store reference as it shows itself)
+    MacErrorDialog(
         parent, "Warning", f"Warning {context}:\n{message}", is_modal=False
     )
+    # The dialog will show itself since is_modal=False

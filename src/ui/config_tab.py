@@ -18,8 +18,10 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 import os
+import traceback
 from ..utils import ConfigManager
 from ..utils.excel_manager import ExcelManager
+from ..utils.logger import get_logger
 
 
 class ConfigTab(QWidget):
@@ -229,9 +231,10 @@ class ConfigTab(QWidget):
             ]
 
             # Get column names from selected sheet
+            logger = get_logger()
             excel_file = self.excel_file_entry.text()
             columns = self.excel_manager.get_sheet_columns(excel_file, sheet_name)
-            print(f"[DEBUG] Sheet changed to {sheet_name}, columns: {columns}")
+            logger.debug(f"Sheet changed to {sheet_name}, columns: {columns}")
 
             # Define default columns based on common names
             default_columns = {
@@ -254,8 +257,8 @@ class ConfigTab(QWidget):
 
                     # First try stored value
                     if stored_value and stored_value in columns:
-                        print(
-                            f"[DEBUG] Setting filter {i} to stored value: '{stored_value}'"
+                        logger.debug(
+                            f"Setting filter {i} to stored value: '{stored_value}'"
                         )
                         combo.setCurrentText(stored_value)
                     else:
@@ -264,15 +267,15 @@ class ConfigTab(QWidget):
                         if i in default_columns:
                             for default_col in default_columns[i]:
                                 if default_col in columns:
-                                    print(
-                                        f"[DEBUG] Setting filter {i} to default value: '{default_col}'"
+                                    logger.debug(
+                                        f"Setting filter {i} to default value: '{default_col}'"
                                     )
                                     combo.setCurrentText(default_col)
                                     default_found = True
                                     break
 
                         if not default_found:
-                            print(f"[DEBUG] No matching value found for filter {i}")
+                            logger.debug(f"No matching value found for filter {i}")
                             combo.setCurrentIndex(0)
                 finally:
                     combo.blockSignals(False)
@@ -281,7 +284,9 @@ class ConfigTab(QWidget):
             self._save_config()
 
         except Exception as e:
-            print(f"[DEBUG] Error in sheet change: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error in sheet change: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             self._handle_error(e, "loading sheet columns")
             # Disable filters on error
             for combo in self.filter_combos:
@@ -294,8 +299,9 @@ class ConfigTab(QWidget):
             self, "Select Excel File", "", "Excel Files (*.xlsx *.xls)"
         )
         if file_path:
+            logger = get_logger()
             try:
-                print(f"[DEBUG] Selected new Excel file: {file_path}")
+                logger.debug(f"Selected new Excel file: {file_path}")
 
                 # Clear all caches first
                 self.excel_manager.clear_caches()
@@ -310,7 +316,7 @@ class ConfigTab(QWidget):
                 # Update file path and load sheets
                 self.excel_file_entry.setText(file_path)
                 sheets = self.excel_manager.get_available_sheets(file_path)
-                print(f"[DEBUG] Found sheets: {sheets}")
+                logger.debug(f"Found sheets: {sheets}")
 
                 if sheets:
                     # Update sheet combo
@@ -327,7 +333,8 @@ class ConfigTab(QWidget):
                 self._save_config()
 
             except Exception as e:
-                print(f"[DEBUG] Error loading Excel file: {str(e)}")
+                logger.error(f"Error loading Excel file: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 self._handle_error(e, "loading Excel file")
 
                 # Reset UI state on error
@@ -367,18 +374,18 @@ class ConfigTab(QWidget):
         # Current preset display at the top
         current_layout = QHBoxLayout()
         layout.addLayout(current_layout)
-        
+
         # Label for active preset
         active_label = QLabel("<b>Active Preset:</b>")
         active_label.setStyleSheet("font-size: 11pt;")
         current_layout.addWidget(active_label)
-        
+
         # Preset combo box
         self.preset_combo = QComboBox()
         self.preset_combo.setMinimumWidth(300)
         self.preset_combo.setToolTip("Select a preset to load")
         current_layout.addWidget(self.preset_combo)
-        
+
         # Save to current preset button (replaces the old Save Configuration)
         save_current_btn = QPushButton("Save Preset")
         save_current_btn.setStyleSheet("""
@@ -536,6 +543,8 @@ class ConfigTab(QWidget):
             self, "Select Folder", "", QFileDialog.Option.ShowDirsOnly
         )
         if folder:
+            logger = get_logger()
+            logger.debug(f"Selected {key} folder: {folder}")
             entry = getattr(self, f"{key}_entry")
             entry.setText(folder)
             self._save_config()
@@ -570,7 +579,8 @@ class ConfigTab(QWidget):
             self.excel_sheet_combo.blockSignals(False)
 
             columns = self.excel_manager.get_sheet_columns(excel_path, curr_sheet)
-            print(f"[DEBUG] Loaded columns: {columns}")
+            logger = get_logger()
+            logger.debug(f"Loaded columns: {columns}")
 
             # Update filter combos with columns and set values
             for i, combo in enumerate(self.filter_combos, 1):
@@ -583,10 +593,10 @@ class ConfigTab(QWidget):
 
                     # Try to set stored value first
                     stored_value = config.get(f"filter{i}_column", "")
-                    print(f"[DEBUG] Filter {i} stored value: {stored_value}")
+                    logger.debug(f"Filter {i} stored value: {stored_value}")
 
-                    print(
-                        f"[DEBUG] Setting filter {i} to stored value: '{stored_value}'"
+                    logger.debug(
+                        f"Setting filter {i} to stored value: '{stored_value}'"
                     )
                     combo.setCurrentText(stored_value)
 
@@ -805,7 +815,9 @@ class ConfigTab(QWidget):
     def _handle_error(self, error: Exception, context: str) -> None:
         """Handle errors based on their severity."""
         # Log the error
-        print(f"[DEBUG] Error {context}: {str(error)}")
+        logger = get_logger()
+        logger.error(f"Error {context}: {str(error)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
         # Determine if this is a critical error that should show a blocking dialog
         is_critical = True

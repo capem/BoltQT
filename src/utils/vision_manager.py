@@ -1,12 +1,18 @@
 from __future__ import annotations
-from typing import Dict, Any, Optional, List
-import os
+
 import json
+import os
 import re
+import traceback
 from datetime import datetime
+from difflib import SequenceMatcher
+from typing import Any, Dict, List, Optional
 
 from google import genai
 from google.genai import types
+
+from .excel_manager import ExcelManager
+from .logger import get_logger
 
 
 class VisionParsingError(Exception):
@@ -37,22 +43,26 @@ class VisionManager:
         if self.config_manager:
             # Check if API key exists before initializing
             api_key = os.getenv("GEMINI_API_KEY")
-            
+
             # If not in environment, try to get from config
             if not api_key:
                 config = self.config_manager.get_config()
                 vision_config = config.get("vision", {})
                 api_key = vision_config.get("gemini_api_key")
-                
+
+            logger = get_logger()
             if api_key:
                 self._vision_parser = VisionParserService(self.config_manager)
-                print("[DEBUG] Vision preprocessing service initialized")
+                logger.debug("Vision preprocessing service initialized")
             else:
                 self._vision_parser = None
-                print("[DEBUG] Vision preprocessing service not initialized - no API key available")
+                logger.debug(
+                    "Vision preprocessing service not initialized - no API key available"
+                )
         else:
-            print(
-                "[DEBUG] Cannot initialize vision service - no config manager provided"
+            logger = get_logger()
+            logger.debug(
+                "Cannot initialize vision service - no config manager provided"
             )
 
     def preprocess_pdf(self, pdf_path: str) -> Optional[Dict[str, Any]]:
@@ -69,8 +79,9 @@ class VisionManager:
             # Log message already printed in is_vision_enabled()
             return None
 
+        logger = get_logger()
         if not self._vision_parser:
-            print("[DEBUG] Vision preprocessing service is not available")
+            logger.debug("Vision preprocessing service is not available")
             return None
 
         try:
@@ -78,21 +89,22 @@ class VisionManager:
             preset_name = self.config_manager.get_current_preset_name()
             document_type = self.config_manager.get_config().get("document_type", "")
 
-            print(
-                f"[DEBUG] Running vision preprocessing on {pdf_path} using preset '{preset_name}'"
+            logger.debug(
+                f"Running vision preprocessing on {pdf_path} using preset '{preset_name}'"
             )
             if document_type:
-                print(f"[DEBUG] Document type: {document_type}")
+                logger.debug(f"Document type: {document_type}")
 
             # Process the PDF with the current preset configuration
             vision_result = self._vision_parser.process_document(pdf_path)
-            print("[DEBUG] Vision preprocessing completed successfully")
+            logger.debug("Vision preprocessing completed successfully")
             return vision_result
         except VisionParsingError as e:
-            print(f"[DEBUG] Vision preprocessing error: {str(e)}")
+            logger.error(f"Vision preprocessing error: {str(e)}")
             return None
         except Exception as e:
-            print(f"[DEBUG] Unexpected vision preprocessing error: {str(e)}")
+            logger.error(f"Unexpected vision preprocessing error: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
 
     def is_vision_enabled(self) -> bool:
@@ -107,22 +119,23 @@ class VisionManager:
         # Check configuration
         config = self.config_manager.get_config()
         vision_config = config.get("vision", {})
-        
+
+        logger = get_logger()
         # First check if enabled in config
         if not vision_config.get("enabled", False):
-            print("[DEBUG] Vision preprocessing is disabled in configuration")
+            logger.debug("Vision preprocessing is disabled in configuration")
             return False
-            
+
         # Then check if API key exists in environment or config
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             api_key = vision_config.get("gemini_api_key")
-            
+
         # Only return true if both enabled and API key exists
         if not api_key:
-            print("[DEBUG] Vision preprocessing is disabled - no API key available")
+            logger.debug("Vision preprocessing is disabled - no API key available")
             return False
-            
+
         return True
 
     def has_vision_service(self) -> bool:
@@ -158,21 +171,22 @@ class VisionParserService:
         config = self.config_manager.get_config()
         api_key = os.getenv("GEMINI_API_KEY")
 
+        logger = get_logger()
         # Check if API key is available
         if not api_key:
-            print("[DEBUG] Gemini API key not found in environment variables")
+            logger.debug("Gemini API key not found in environment variables")
             # Try to get from config
             vision_config = config.get("vision", {})
             api_key = vision_config.get("gemini_api_key")
             if not api_key:
-                print("[DEBUG] Gemini API key not found in config")
+                logger.debug("Gemini API key not found in config")
 
         if api_key:
             self.client = genai.Client(api_key=api_key)
-            print("[DEBUG] Gemini API client initialized successfully")
+            logger.debug("Gemini API client initialized successfully")
         else:
-            print(
-                "[DEBUG] WARNING: No Gemini API key found, vision preprocessing will be disabled"
+            logger.warning(
+                "No Gemini API key found, vision preprocessing will be disabled"
             )
             self.client = None
 
@@ -188,38 +202,41 @@ class VisionParserService:
         Raises:
             VisionParsingError: If preprocessing fails
         """
+        logger = get_logger()
         # Early check to ensure client is initialized
         if not self.client:
-            print("[DEBUG] Vision preprocessing skipped - Gemini client not initialized")
+            logger.warning(
+                "Vision preprocessing skipped - Gemini client not initialized"
+            )
             raise VisionParsingError("Vision preprocessing unavailable - No API key")
-            
+
         try:
-            print(f"[DEBUG] Starting vision preprocessing for document: {pdf_path}")
+            logger.debug(f"Starting vision preprocessing for document: {pdf_path}")
 
             # Get configuration for vision preprocessing
             config = self.config_manager.get_config()
             document_type = config.get("document_type", "")
 
             if document_type:
-                print(f"[DEBUG] Document type: {document_type}")
+                logger.debug(f"Document type: {document_type}")
 
             # Step 1: Convert PDF to images
-            print("[DEBUG] Converting PDF to images...")
+            logger.debug("Converting PDF to images...")
             image_paths = self._convert_pdf_to_images(pdf_path)
             if not image_paths:
-                print("[DEBUG] Failed to convert PDF to images")
+                logger.error("Failed to convert PDF to images")
                 raise VisionParsingError("Failed to convert PDF to images")
-            print(f"[DEBUG] Generated {len(image_paths)} images from PDF")
+            logger.debug(f"Generated {len(image_paths)} images from PDF")
 
             # Step 2: Extract text using Gemini Vision API with prompt from config
-            print("[DEBUG] Extracting data from images with Gemini...")
+            logger.debug("Extracting data from images with Gemini...")
 
             # Get prompt from config
             prompt = config.get("prompt", "").strip()
 
             if not prompt:
-                print(
-                    "[DEBUG] No prompt defined in configuration, cannot process document"
+                logger.error(
+                    "No prompt defined in configuration, cannot process document"
                 )
                 raise VisionParsingError("No prompt defined in configuration")
 
@@ -227,29 +244,31 @@ class VisionParserService:
             field_mappings = config.get("field_mappings", {})
 
             if not field_mappings:
-                print(
-                    "[DEBUG] No field mappings defined in configuration, document extraction may be incomplete"
+                logger.warning(
+                    "No field mappings defined in configuration, document extraction may be incomplete"
                 )
 
             extracted_data = self._extract_document_data(image_paths, prompt)
-            print(
-                f"[DEBUG] Extracted data for filter population: {json.dumps(extracted_data, indent=2)}"
+            logger.debug(
+                f"Extracted data for filter population: {json.dumps(extracted_data, indent=2)}"
             )
 
             # Step 3: Validate supplier with fuzzy matching
             supplier_name = extracted_data.get("supplier_name", "")
-            print(f"[DEBUG] Validating extracted supplier name: '{supplier_name}'")
+            logger.debug(f"Validating extracted supplier name: '{supplier_name}'")
             supplier_validation = self._fuzzy_matcher.find_match(
                 supplier_name, "supplier"
             )
-            print(
-                f"[DEBUG] Supplier validation result: {json.dumps(supplier_validation, indent=2)}"
+            logger.debug(
+                f"Supplier validation result: {json.dumps(supplier_validation, indent=2)}"
             )
 
             # Map extracted data to expected filter fields
-            normalized_data = self._map_extracted_fields(extracted_data, field_mappings, supplier_validation)
-            print(
-                f"[DEBUG] Normalized data for filters: {json.dumps(normalized_data, indent=2)}"
+            normalized_data = self._map_extracted_fields(
+                extracted_data, field_mappings, supplier_validation
+            )
+            logger.debug(
+                f"Normalized data for filters: {json.dumps(normalized_data, indent=2)}"
             )
 
             # Combine results
@@ -265,22 +284,22 @@ class VisionParserService:
                 "document_type": document_type,
             }
 
-            print(
-                f"[DEBUG] Vision preprocessing complete. Final result keys: {list(result.keys())}"
+            logger.debug(
+                f"Vision preprocessing complete. Final result keys: {list(result.keys())}"
             )
             return result
 
         except Exception as e:
             error_msg = f"Vision preprocessing failed: {str(e)}"
-            print(f"[DEBUG] {error_msg}")
-            import traceback
-
-            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+            logger.error(error_msg)
+            logger.error(f"Error traceback: {traceback.format_exc()}")
             raise VisionParsingError(error_msg)
 
     def _map_extracted_fields(
-        self, extracted_data: Dict[str, Any], field_mappings: Dict[str, str],
-        supplier_validation: Dict[str, Any] = None
+        self,
+        extracted_data: Dict[str, Any],
+        field_mappings: Dict[str, str],
+        supplier_validation: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """Maps extracted fields to filter fields based on field mappings.
 
@@ -293,28 +312,43 @@ class VisionParserService:
             Dict with normalized field names matching filters
         """
         normalized_data = {}
-        
+
         # Get config for supplier match threshold
         config = self.config_manager.get_config()
         vision_config = config.get("vision", {})
         supplier_match_threshold = vision_config.get("supplier_match_threshold", 0.75)
-        
+
         # Map each extracted field to its corresponding filter
         for extracted_field, filter_field in field_mappings.items():
             if extracted_field in extracted_data:
                 # Special handling for supplier name when it's mapped to filter1
-                if extracted_field == "supplier_name" and filter_field == "filter1" and supplier_validation:
-                    if (supplier_validation.get("match_found", False) and
-                        supplier_validation.get("confidence", 0) >= supplier_match_threshold):
+                if (
+                    extracted_field == "supplier_name"
+                    and filter_field == "filter1"
+                    and supplier_validation
+                ):
+                    if (
+                        supplier_validation.get("match_found", False)
+                        and supplier_validation.get("confidence", 0)
+                        >= supplier_match_threshold
+                    ):
                         # Use the fuzzy matched value
-                        print(f"[DEBUG] Using fuzzy matched supplier name: '{supplier_validation['best_match']}' "
-                              f"instead of '{extracted_data[extracted_field]}' (confidence: {supplier_validation['confidence']})")
-                        normalized_data[filter_field] = supplier_validation["best_match"]
+                        logger = get_logger()
+                        logger.debug(
+                            f"Using fuzzy matched supplier name: '{supplier_validation['best_match']}' "
+                            f"instead of '{extracted_data[extracted_field]}' (confidence: {supplier_validation['confidence']})"
+                        )
+                        normalized_data[filter_field] = supplier_validation[
+                            "best_match"
+                        ]
                     else:
                         # Use original value
+                        logger = get_logger()
                         normalized_data[filter_field] = extracted_data[extracted_field]
-                        print(f"[DEBUG] Using original supplier name: '{extracted_data[extracted_field]}' "
-                              f"(no match or below threshold {supplier_match_threshold})")
+                        logger.debug(
+                            f"Using original supplier name: '{extracted_data[extracted_field]}' "
+                            f"(no match or below threshold {supplier_match_threshold})"
+                        )
                 else:
                     # Standard mapping for non-supplier fields
                     normalized_data[filter_field] = extracted_data[extracted_field]
@@ -322,12 +356,21 @@ class VisionParserService:
         # Always include standard fields for backward compatibility
         if "supplier_name" in extracted_data and "filter1" not in normalized_data:
             # Similar special handling for the default case
-            if supplier_validation and supplier_validation.get("match_found", False) and supplier_validation.get("confidence", 0) >= supplier_match_threshold:
+            logger = get_logger()
+            if (
+                supplier_validation
+                and supplier_validation.get("match_found", False)
+                and supplier_validation.get("confidence", 0) >= supplier_match_threshold
+            ):
                 normalized_data["filter1"] = supplier_validation["best_match"]
-                print(f"[DEBUG] Using fuzzy matched supplier name (default): '{supplier_validation['best_match']}'")
+                logger.debug(
+                    f"Using fuzzy matched supplier name (default): '{supplier_validation['best_match']}'"
+                )
             else:
                 normalized_data["filter1"] = extracted_data["supplier_name"]
-                print(f"[DEBUG] Using original supplier name (default): '{extracted_data['supplier_name']}'")
+                logger.debug(
+                    f"Using original supplier name (default): '{extracted_data['supplier_name']}'"
+                )
 
         return normalized_data
 
@@ -340,10 +383,11 @@ class VisionParserService:
         Returns:
             List of paths to generated images
         """
+        logger = get_logger()
         try:
             # This is a placeholder - in a real implementation, you would use a library like pdf2image
             # For now, we'll assume the conversion works and return a dummy path
-            print(f"[DEBUG] Converting PDF to images: {pdf_path}")
+            logger.debug(f"Converting PDF to images: {pdf_path}")
 
             # In a real implementation:
             # from pdf2image import convert_from_path
@@ -355,15 +399,13 @@ class VisionParserService:
             #     image_paths.append(img_path)
 
             # For now, just return the PDF path as a placeholder
-            print(
-                "[DEBUG] Using PDF path directly as image path (placeholder implementation)"
+            logger.debug(
+                "Using PDF path directly as image path (placeholder implementation)"
             )
             return [pdf_path]
         except Exception as e:
-            print(f"[DEBUG] Error converting PDF to images: {str(e)}")
-            import traceback
-
-            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+            logger.error(f"Error converting PDF to images: {str(e)}")
+            logger.error(f"Error traceback: {traceback.format_exc()}")
             return []
 
     def _extract_document_data(
@@ -378,32 +420,33 @@ class VisionParserService:
         Returns:
             Structured data extracted from the document
         """
+        logger = get_logger()
         try:
             if not self.client:
-                print(
-                    "[DEBUG] Cannot extract document data - Gemini client not initialized"
+                logger.error(
+                    "Cannot extract document data - Gemini client not initialized"
                 )
                 raise VisionParsingError("Gemini client not initialized")
 
-            print(f"[DEBUG] Extracting data from {len(image_paths)} document images")
+            logger.debug(f"Extracting data from {len(image_paths)} document images")
 
             # Get the first image for processing
             image_path = image_paths[0]
-            print(f"[DEBUG] Using image: {image_path}")
+            logger.debug(f"Using image: {image_path}")
 
             # Use the provided document-specific prompt
-            print(f"[DEBUG] Using prompt: {prompt}")
+            logger.debug(f"Using prompt: {prompt}")
 
             try:
                 # Check if file exists before uploading
                 if not os.path.exists(image_path):
-                    print(f"[DEBUG] Image file does not exist: {image_path}")
+                    logger.error(f"Image file does not exist: {image_path}")
                     raise VisionParsingError(f"Image file does not exist: {image_path}")
 
-                print(f"[DEBUG] Uploading file: {image_path}")
+                logger.debug(f"Uploading file: {image_path}")
                 # Upload the image file
                 files = [self.client.files.upload(file=image_path)]
-                print(f"[DEBUG] File uploaded successfully: {files[0].uri}")
+                logger.debug(f"File uploaded successfully: {files[0].uri}")
 
                 # Create content structure that works with the API
                 contents = [
@@ -414,7 +457,9 @@ class VisionParserService:
                                 file_uri=files[0].uri,
                                 mime_type=files[0].mime_type,
                             ),
-                            types.Part.from_text(text=f"{prompt}\n\nReturn ONLY a JSON object with these fields as keys. If any field is not found in the image, set its value to null."),
+                            types.Part.from_text(
+                                text=f"{prompt}\n\nReturn ONLY a JSON object with these fields as keys. If any field is not found in the image, set its value to null."
+                            ),
                         ],
                     ),
                     # Remove the empty model parts that's causing the error
@@ -422,7 +467,9 @@ class VisionParserService:
                     types.Content(
                         role="user",
                         parts=[
-                            types.Part.from_text(text="Please extract the information as valid JSON only"),
+                            types.Part.from_text(
+                                text="Please extract the information as valid JSON only"
+                            ),
                         ],
                     ),
                 ]
@@ -438,32 +485,31 @@ class VisionParserService:
                 )
 
                 # Use non-streaming API
-                print(f"[DEBUG] Calling Gemini API with model: {model}")
+                logger.debug(f"Calling Gemini API with model: {model}")
                 response_text = ""
 
                 try:
                     # Use non-streaming generate_content method
-                    print("[DEBUG] Making non-streaming API call")
+                    logger.debug("Making non-streaming API call")
                     response = self.client.models.generate_content(
                         model=model,
                         contents=contents,
                         config=generate_config,
                     )
                     response_text = response.text
-                    print("[DEBUG] API call successful")
+                    logger.debug("API call successful")
 
                 except Exception as api_error:
-                    print(f"[DEBUG] API call failed: {str(api_error)}")
-                    import traceback
-                    print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+                    logger.error(f"API call failed: {str(api_error)}")
+                    logger.error(f"Error traceback: {traceback.format_exc()}")
                     return {}
 
                 # If we got here with empty response_text, all attempts failed
                 if not response_text:
-                    print("[DEBUG] No response text received after all attempts")
+                    logger.warning("No response text received after all attempts")
                     return {}
 
-                print(f"[DEBUG] Full API response: {response_text}")
+                logger.debug(f"Full API response: {response_text}")
 
                 # Parse the JSON response
                 try:
@@ -486,7 +532,7 @@ class VisionParserService:
                                     first_newline:
                                 ].strip()
 
-                    print(f"[DEBUG] Cleaned response for parsing: {cleaned_response}")
+                    logger.debug(f"Cleaned response for parsing: {cleaned_response}")
 
                     # Try multiple parsing approaches
                     parsed_data = None
@@ -495,7 +541,7 @@ class VisionParserService:
                     # Approach 1: Direct JSON parsing
                     try:
                         parsed_data = json.loads(cleaned_response)
-                        print("[DEBUG] Successfully parsed JSON directly")
+                        logger.debug("Successfully parsed JSON directly")
                     except json.JSONDecodeError as e:
                         parsing_errors.append(f"Direct parsing error: {str(e)}")
 
@@ -506,65 +552,84 @@ class VisionParserService:
                             if "'" in cleaned_response and '"' not in cleaned_response:
                                 fixed_json = cleaned_response.replace("'", '"')
                                 parsed_data = json.loads(fixed_json)
-                                print("[DEBUG] Successfully parsed JSON after replacing single quotes")
+                                logger.debug(
+                                    "Successfully parsed JSON after replacing single quotes"
+                                )
                         except json.JSONDecodeError as e:
-                            parsing_errors.append(f"Quote replacement parsing error: {str(e)}")
+                            parsing_errors.append(
+                                f"Quote replacement parsing error: {str(e)}"
+                            )
 
                             # Approach 3: Extract JSON object using regex
                             try:
-                                json_match = re.search(r"\{.*\}", cleaned_response, re.DOTALL)
+                                json_match = re.search(
+                                    r"\{.*\}", cleaned_response, re.DOTALL
+                                )
                                 if json_match:
                                     potential_json = json_match.group(0)
-                                    print(f"[DEBUG] Trying to parse extracted JSON: {potential_json}")
+                                    logger.debug(
+                                        f"Trying to parse extracted JSON: {potential_json}"
+                                    )
                                     parsed_data = json.loads(potential_json)
-                                    print("[DEBUG] Successfully parsed JSON using regex extraction")
+                                    logger.debug(
+                                        "Successfully parsed JSON using regex extraction"
+                                    )
                                 else:
-                                    parsing_errors.append("No JSON object pattern found in response")
+                                    parsing_errors.append(
+                                        "No JSON object pattern found in response"
+                                    )
                             except Exception as regex_error:
-                                parsing_errors.append(f"Regex extraction error: {str(regex_error)}")
+                                parsing_errors.append(
+                                    f"Regex extraction error: {str(regex_error)}"
+                                )
 
                     # If all parsing attempts failed
                     if parsed_data is None:
-                        print(f"[DEBUG] All JSON parsing attempts failed: {', '.join(parsing_errors)}")
-                        print("[DEBUG] Returning empty dictionary")
+                        logger.error(
+                            f"All JSON parsing attempts failed: {', '.join(parsing_errors)}"
+                        )
+                        logger.debug("Returning empty dictionary")
                         return {}
 
                     # Ensure the result is a dictionary
                     if isinstance(parsed_data, dict):
-                        print(
-                            f"[DEBUG] Successfully parsed JSON object: {json.dumps(parsed_data, indent=2)}"
+                        logger.debug(
+                            f"Successfully parsed JSON object: {json.dumps(parsed_data, indent=2)}"
                         )
                         return parsed_data
                     elif isinstance(parsed_data, list):
-                        print(f"[WARN] API returned a JSON array, expected object: {parsed_data}")
+                        logger.warning(
+                            f"API returned a JSON array, expected object: {parsed_data}"
+                        )
                         # Handle list case: take the first element if it's a dict
                         if parsed_data and isinstance(parsed_data[0], dict):
-                            print("[DEBUG] Using the first dictionary found in the array.")
+                            logger.debug(
+                                "Using the first dictionary found in the array."
+                            )
                             return parsed_data[0]
                         else:
-                            print("[DEBUG] Returning empty dictionary as API returned unexpected list format.")
+                            logger.warning(
+                                "Returning empty dictionary as API returned unexpected list format."
+                            )
                             return {}  # Return empty dict if list or list[0] is not dict
                     else:
-                        print(f"[WARN] API returned unexpected JSON type: {type(parsed_data)}")
+                        logger.warning(
+                            f"API returned unexpected JSON type: {type(parsed_data)}"
+                        )
                         return {}  # Return empty dict for other unexpected types
 
                 except Exception as e:
-                    print(f"[DEBUG] Unexpected error during JSON parsing: {str(e)}")
-                    import traceback
-                    print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+                    logger.error(f"Unexpected error during JSON parsing: {str(e)}")
+                    logger.error(f"Error traceback: {traceback.format_exc()}")
                     return {}  # Return empty dict on any unexpected error
 
             except Exception as e:
-                print(f"[DEBUG] Error during Gemini API call: {str(e)}")
-                import traceback
-
-                print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+                logger.error(f"Error during Gemini API call: {str(e)}")
+                logger.error(f"Error traceback: {traceback.format_exc()}")
                 return {}
         except Exception as e:
-            print(f"[DEBUG] Error extracting document data: {str(e)}")
-            import traceback
-
-            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+            logger.error(f"Error extracting document data: {str(e)}")
+            logger.error(f"Error traceback: {traceback.format_exc()}")
             return {}
 
 
@@ -603,9 +668,10 @@ class FuzzyMatcher:
             values: List of values to match against
         """
         self.entries[entry_type] = [str(s).strip() for s in values if str(s).strip()]
-        print(f"[DEBUG] Loaded {len(self.entries[entry_type])} {entry_type} entries")
-        print(
-            f"[DEBUG] Sample {entry_type} entries: {self.entries[entry_type][:5] if len(self.entries[entry_type]) > 5 else self.entries[entry_type]}"
+        logger = get_logger()
+        logger.debug(f"Loaded {len(self.entries[entry_type])} {entry_type} entries")
+        logger.debug(
+            f"Sample {entry_type} entries: {self.entries[entry_type][:5] if len(self.entries[entry_type]) > 5 else self.entries[entry_type]}"
         )
 
     def load_entries_from_excel(self, entry_type: str, column_name: str) -> None:
@@ -615,20 +681,19 @@ class FuzzyMatcher:
             entry_type: The type of entries (e.g., 'supplier', 'invoice')
             column_name: The Excel column name containing the values
         """
+        logger = get_logger()
         try:
             config = self.config_manager.get_config()
             if not config.get("excel_file") or not config.get("excel_sheet"):
-                print("[DEBUG] Excel configuration not found")
+                logger.debug("Excel configuration not found")
                 return
-
-            from .excel_manager import ExcelManager
 
             excel_manager = ExcelManager()
 
             # Load Excel data
             excel_manager.load_excel_data(config["excel_file"], config["excel_sheet"])
             if excel_manager.excel_data is None:
-                print("[DEBUG] Failed to load Excel data")
+                logger.debug("Failed to load Excel data")
                 return
 
             # Get unique values from the specified column
@@ -636,13 +701,11 @@ class FuzzyMatcher:
                 values = excel_manager.excel_data[column_name].unique().tolist()
                 self.load_entries(entry_type, values)
             else:
-                print(f"[DEBUG] Column '{column_name}' not found in Excel")
+                logger.warning(f"Column '{column_name}' not found in Excel")
 
         except Exception as e:
-            print(f"[DEBUG] Error loading entries from Excel: {str(e)}")
-            import traceback
-
-            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+            logger.error(f"Error loading entries from Excel: {str(e)}")
+            logger.error(f"Error traceback: {traceback.format_exc()}")
 
     def find_match(
         self, query: str, entry_type: str, threshold: float = None
@@ -657,15 +720,16 @@ class FuzzyMatcher:
         Returns:
             Dictionary with match results
         """
-        print(
-            f"[DEBUG] Starting fuzzy matching for '{query}' against {entry_type} entries"
+        logger = get_logger()
+        logger.debug(
+            f"Starting fuzzy matching for '{query}' against {entry_type} entries"
         )
 
         # Get the entries for the specified type
         values = self.entries.get(entry_type, [])
 
         if not query or not values:
-            print("[DEBUG] Empty query or no entries available")
+            logger.debug("Empty query or no entries available")
             return {
                 "match_found": False,
                 "best_match": None,
@@ -680,8 +744,8 @@ class FuzzyMatcher:
             field_threshold_key = f"{entry_type}_match_threshold"
             threshold = vision_config.get(field_threshold_key, self.threshold)
 
-        print(f"[DEBUG] Using match threshold: {threshold}")
-        print(f"[DEBUG] Comparing against {len(values)} {entry_type} entries")
+        logger.debug(f"Using match threshold: {threshold}")
+        logger.debug(f"Comparing against {len(values)} {entry_type} entries")
 
         # Find the best match
         best_match, highest_score, matches = self._find_best_match(
@@ -691,7 +755,7 @@ class FuzzyMatcher:
         # Sort matches by score for debugging
         matches.sort(key=lambda x: x[1], reverse=True)
         top_matches = matches[:5] if len(matches) >= 5 else matches
-        print(f"[DEBUG] Top matches: {top_matches}")
+        logger.debug(f"Top matches: {top_matches}")
 
         match_found = highest_score >= threshold
 
@@ -703,7 +767,7 @@ class FuzzyMatcher:
             "threshold": threshold,
         }
 
-        print(f"[DEBUG] Fuzzy matching result: {result}")
+        logger.debug(f"Fuzzy matching result: {result}")
         return result
 
     def _parse_formatted_value(self, formatted_value: str) -> str:
@@ -718,8 +782,6 @@ class FuzzyMatcher:
         Returns:
             The clean value without formatting
         """
-        import re
-
         if not formatted_value:
             return ""
 
@@ -744,8 +806,6 @@ class FuzzyMatcher:
         Returns:
             Tuple of (best_match, highest_score, all_matches)
         """
-        from difflib import SequenceMatcher
-
         query = str(query).strip().lower()
         best_match = None
         highest_score = 0

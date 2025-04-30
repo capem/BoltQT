@@ -1,14 +1,24 @@
 from __future__ import annotations
-from typing import Optional, List, Callable, Any
+
+import os
+import platform
+import subprocess
+import traceback
+import urllib.parse
 from difflib import SequenceMatcher
+from typing import Any, Callable, List, Optional
+
+from openpyxl import load_workbook
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
     QLineEdit,
     QListWidget,
     QMenu,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+
+from ..utils.logger import get_logger
 
 
 class FuzzySearchFrame(QWidget):
@@ -178,7 +188,9 @@ class FuzzySearchFrame(QWidget):
                 self.listbox.addItem(value)
 
         except Exception as e:
-            print(f"[DEBUG] Error in fuzzy search ({self.identifier}): {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error in fuzzy search ({self.identifier}): {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # Fall back to simple contains matching
             for value in self.all_values:
                 if current_value.lower() in value.lower():
@@ -283,14 +295,16 @@ class FuzzySearchFrame(QWidget):
         # Find the parent ProcessingTab
         processing_tab = self._get_processing_tab()
         if not processing_tab:
-            print("[DEBUG] Could not find ProcessingTab parent")
+            logger = get_logger()
+            logger.warning("Could not find ProcessingTab parent")
             return
 
         try:
             # Parse the value to get the row index
             _, row_idx = processing_tab._parse_filter2_value(value)
             if row_idx < 0:
-                print(f"[DEBUG] Invalid row index: {row_idx}")
+                logger = get_logger()
+                logger.warning(f"Invalid row index: {row_idx}")
                 return
 
             # Get the configuration
@@ -300,19 +314,19 @@ class FuzzySearchFrame(QWidget):
             filter2_column = config.get("filter2_column")
 
             if not all([excel_file, excel_sheet, filter2_column]):
-                print("[DEBUG] Missing required configuration")
+                logger = get_logger()
+                logger.warning("Missing required configuration")
                 return
 
             # Get the hyperlink from Excel
-            from openpyxl import load_workbook
-
             wb = load_workbook(excel_file, data_only=True)
             ws = wb[excel_sheet]
 
             # Find the column index
             header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
             if filter2_column not in header:
-                print(f"[DEBUG] Column '{filter2_column}' not found")
+                logger = get_logger()
+                logger.warning(f"Column '{filter2_column}' not found")
                 return
             col_idx = header[filter2_column]
 
@@ -322,19 +336,18 @@ class FuzzySearchFrame(QWidget):
             )  # +2 for header and 1-based index
 
             if not cell.hyperlink:
-                print(f"[DEBUG] No hyperlink found in cell {cell.coordinate}")
+                logger = get_logger()
+                logger.warning(f"No hyperlink found in cell {cell.coordinate}")
                 return
 
             # Get the hyperlink target
             target = cell.hyperlink.target
             if not target:
-                print("[DEBUG] Empty hyperlink target")
+                logger = get_logger()
+                logger.warning("Empty hyperlink target")
                 return
 
             # Resolve the path if it's relative
-            import os
-            import urllib.parse
-
             # Fix 1: URL decode the target path to handle %20 and other encoded characters
             target = urllib.parse.unquote(target)
 
@@ -345,24 +358,27 @@ class FuzzySearchFrame(QWidget):
             # For Windows (when running on WSL or native Windows)
             if target.startswith("//") or target.startswith("\\\\"):
                 # This is a UNC path - ensure consistent formatting
+                logger = get_logger()
+                logger.debug(f"Normalizing UNC path: {target}")
+
                 if os.name == "nt":  # Native Windows
                     # Convert to Windows backslash format
                     target = target.replace("/", "\\")
                     # Ensure UNC prefix is correct
                     if not target.startswith("\\\\"):
                         target = "\\\\" + target[2:]
+                    logger.debug(f"Normalized to Windows format: {target}")
                 else:  # WSL or Linux
                     # Convert to forward slash format for WSL
                     target = target.replace("\\", "/")
                     # Ensure UNC prefix is correct
                     if not target.startswith("//"):
                         target = "//" + target[2:]
+                    logger.debug(f"Normalized to Unix format: {target}")
 
-            print(f"[DEBUG] Normalized target path: {target}")
+            logger.debug(f"Final target path: {target}")
 
             # Open the file using the system's default application
-            import subprocess
-            import platform
 
             if platform.system() == "Windows":
                 os.startfile(target)
@@ -371,10 +387,12 @@ class FuzzySearchFrame(QWidget):
             else:  # Linux
                 subprocess.call(("xdg-open", target))
 
-            print(f"[DEBUG] Opened linked file: {target}")
+            logger.info(f"Opened linked file: {target}")
 
         except Exception as e:
-            print(f"[DEBUG] Error opening linked file: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error opening linked file: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
     def _get_processing_tab(self):
         """Get the parent ProcessingTab instance."""

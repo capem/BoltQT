@@ -1,6 +1,7 @@
-from PyQt6.QtWidgets import QWidget, QApplication
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush
-from PyQt6.QtCore import Qt, QTimer, QRectF
+from PyQt6.QtCore import QRectF, Qt, QTimer
+from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtWidgets import QApplication, QLabel, QWidget
+
 
 class LoadingOverlay(QWidget):
     """
@@ -85,7 +86,8 @@ class LoadingOverlay(QWidget):
 # Example usage (for testing standalone)
 if __name__ == '__main__':
     import sys
-    from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QPushButton
+
+    from PyQt6.QtWidgets import QMainWindow, QPushButton, QVBoxLayout
 
     app = QApplication(sys.argv)
 

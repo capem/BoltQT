@@ -1,9 +1,12 @@
 from __future__ import annotations
-from typing import Dict, Any
-from string import Template
-from datetime import datetime
-import os
+
 import re
+import traceback
+from datetime import datetime
+from string import Template
+from typing import Any, Dict
+
+from .logger import get_logger
 from .path_utils import normalize_path, sanitize_path_component
 
 
@@ -212,20 +215,24 @@ class TemplateManager:
                                     continue
                             else:
                                 # If we get here, none of the formats worked
-                                print(f"[DEBUG] Could not parse date string: {value}")
+                                logger = get_logger()
+                                logger.warning(f"Could not parse date string: {value}")
                                 # Use current date as fallback
                                 result = self._apply_date_operation(
                                     datetime.now(), operation
                                 )
                         except Exception as e:
-                            print(f"[DEBUG] Error in date operation: {str(e)}")
+                            logger = get_logger()
+                            logger.error(f"Error in date operation: {str(e)}")
+                            logger.error(f"Traceback: {traceback.format_exc()}")
                             # Use current date as fallback
                             result = self._apply_date_operation(
                                 datetime.now(), operation
                             )
                     else:
-                        print(
-                            f"[DEBUG] Date operations can only be applied to datetime objects or date strings: {value}"
+                        logger = get_logger()
+                        logger.warning(
+                            f"Date operations can only be applied to datetime objects or date strings: {value}"
                         )
                         # Use current date as fallback
                         result = self._apply_date_operation(datetime.now(), operation)
@@ -234,9 +241,11 @@ class TemplateManager:
                 else:
                     raise ValueError(f"Unknown operation type: {operation}")
             except Exception as e:
-                print(
-                    f"[DEBUG] Error applying operation '{operation}' to value '{value}': {str(e)}"
+                logger = get_logger()
+                logger.error(
+                    f"Error applying operation '{operation}' to value '{value}': {str(e)}"
                 )
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 # Return a safe value to continue processing
                 result = str(value)
 
@@ -258,7 +267,8 @@ class TemplateManager:
             field_name, operations = self._parse_field(field_content)
 
             if field_name not in data:
-                print(f"[DEBUG] Field not found in data: {field_name}")
+                logger = get_logger()
+                logger.warning(f"Field not found in data: {field_name}")
                 return "_"
 
             value = data[field_name]
@@ -271,7 +281,9 @@ class TemplateManager:
             try:
                 return self._apply_operations(value, operations)
             except Exception as e:
-                print(f"[DEBUG] Error processing field {field_content}: {str(e)}")
+                logger = get_logger()
+                logger.error(f"Error processing field {field_content}: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 return "_"
 
         # Use curly brace pattern from original implementation
@@ -282,7 +294,9 @@ class TemplateManager:
             result = re.sub(pattern, replace_field, template)
             return result
         except Exception as e:
-            print(f"[DEBUG] Error in template processing: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error in template processing: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # Return a basic fallback with the current date
             return f"fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
@@ -324,7 +338,9 @@ class TemplateManager:
             return path
 
         except Exception as e:
-            print(f"[DEBUG] Error formatting path: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error formatting path: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # Return a fallback path with timestamp
             return f"fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
@@ -383,5 +399,7 @@ class TemplateManager:
             return True
 
         except Exception as e:
-            print(f"[DEBUG] Template validation error: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Template validation error: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False

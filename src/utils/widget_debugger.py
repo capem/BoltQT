@@ -1,5 +1,7 @@
 from PyQt6.QtCore import QObject, QEvent, QTimer
 from PyQt6.QtWidgets import QApplication, QToolBar
+from PyQt6.QtGui import QAction, QKeySequence
+from .logger import get_logger
 
 
 class WidgetDebugger(QObject):
@@ -40,8 +42,9 @@ class WidgetDebugger(QObject):
             if app:
                 app.installEventFilter(cls.instance())
                 cls._enabled = True
-                print("Widget debugging enabled. Click on elements to identify them.")
-    
+                logger = get_logger()
+                logger.info("Widget debugging enabled. Click on elements to identify them.")
+
     @classmethod
     def disable(cls):
         """Disable widget debugging application-wide."""
@@ -50,8 +53,9 @@ class WidgetDebugger(QObject):
             if app:
                 app.removeEventFilter(cls.instance())
                 cls._enabled = False
-                print("Widget debugging disabled.")
-    
+                logger = get_logger()
+                logger.info("Widget debugging disabled.")
+
     @classmethod
     def toggle(cls):
         """Toggle debugging on/off."""
@@ -77,37 +81,40 @@ class WidgetDebugger(QObject):
         if event.type() == QEvent.Type.MouseButtonPress:
             if obj not in self.tracked_widgets and hasattr(obj, "setStyleSheet"):
                 self.tracked_widgets.add(obj)
-                
-                # Print widget information
-                print("\n=== WIDGET CLICKED ===")
-                print(f"Widget Type: {type(obj).__name__}")
-                print(f"Object Name: {obj.objectName()}")
-                
+
+                # Get logger
+                logger = get_logger()
+
+                # Log widget information
+                logger.info("=== WIDGET CLICKED ===")
+                logger.info(f"Widget Type: {type(obj).__name__}")
+                logger.info(f"Object Name: {obj.objectName()}")
+
                 # Get widget position and size
                 geo = obj.geometry()
-                print(f"Geometry: x={geo.x()}, y={geo.y()}, w={geo.width()}, h={geo.height()}")
-                
+                logger.info(f"Geometry: x={geo.x()}, y={geo.y()}, w={geo.width()}, h={geo.height()}")
+
                 # Get parent information
                 if obj.parent():
-                    print(f"Parent: {type(obj.parent()).__name__} ({obj.parent().objectName()})")
-                    
-                    # If parent is QToolBar, print all its children
+                    logger.info(f"Parent: {type(obj.parent()).__name__} ({obj.parent().objectName()})")
+
+                    # If parent is QToolBar, log all its children
                     if isinstance(obj.parent(), QToolBar):
-                        print("\nSiblings in toolbar:")
+                        logger.info("Siblings in toolbar:")
                         for i in range(obj.parent().layout().count()):
                             item = obj.parent().layout().itemAt(i)
                             if item and item.widget():
                                 child = item.widget()
-                                print(f"  Child {i}: {type(child).__name__} ({child.objectName()})")
-                
+                                logger.info(f"  Child {i}: {type(child).__name__} ({child.objectName()})")
+
                 # Get stylesheet
                 if obj.styleSheet():
-                    print(f"StyleSheet: {obj.styleSheet()}")
-                
-                # If it's a QToolButton or similar, print text
+                    logger.info(f"StyleSheet: {obj.styleSheet()}")
+
+                # If it's a QToolButton or similar, log text
                 if hasattr(obj, "text") and callable(obj.text):
-                    print(f"Text: {obj.text()}")
-                
+                    logger.info(f"Text: {obj.text()}")
+
                 # Remove highlight from previous widget
                 if self.highlight_widget and self.highlight_widget != obj:
                     self.highlight_widget.setStyleSheet(self.original_stylesheet)
@@ -141,10 +148,11 @@ def setup_global_debug_shortcut(parent):
     Args:
         parent: The widget to attach the shortcut to.
     """
-    from PyQt6.QtGui import QAction, QKeySequence
-    
+    logger = get_logger()
+    logger.debug("Setting up widget debugger shortcut (Ctrl+Shift+D)")
+
     # Create the debug action
     debug_action = QAction("Toggle Widget Debugging", parent)
     debug_action.setShortcut(QKeySequence("Ctrl+Shift+D"))
     debug_action.triggered.connect(WidgetDebugger.toggle)
-    parent.addAction(debug_action) 
+    parent.addAction(debug_action)

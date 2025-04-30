@@ -2,7 +2,9 @@ from __future__ import annotations
 from typing import Dict, Any, List, Callable, Optional
 import json
 import os
+import traceback
 from PyQt6.QtCore import QObject, pyqtSignal
+from .logger import get_logger
 
 
 class ConfigManager(QObject):
@@ -56,6 +58,7 @@ class ConfigManager(QObject):
 
     def load_config(self) -> None:
         """Load configuration from config.json."""
+        logger = get_logger()
         try:
             if os.path.exists(self._config_file):
                 with open(self._config_file, "r", encoding="utf-8") as f:
@@ -70,9 +73,7 @@ class ConfigManager(QObject):
                             configs[last_preset]
                         )
                         self._current_preset = last_preset
-                        print(
-                            f"[DEBUG] Loaded configuration from last used preset: {last_preset}"
-                        )
+                        logger.info(f"Loaded configuration from last used preset: {last_preset}")
                     else:
                         # Try to load the first available preset
                         preset_names = [
@@ -88,14 +89,10 @@ class ConfigManager(QObject):
                             self._current_preset = first_preset
                             configs["_last_used_preset"] = first_preset
                             self._save_configs(configs)
-                            print(
-                                f"[DEBUG] Loaded configuration from first preset: {first_preset}"
-                            )
+                            logger.info(f"Loaded configuration from first preset: {first_preset}")
                         else:
                             # Create a default config if no presets exist
-                            print(
-                                "[DEBUG] No presets found, using default configuration"
-                            )
+                            logger.warning("No presets found, using default configuration")
             else:
                 # Create default configs file with initial preset
                 configs = {
@@ -104,10 +101,12 @@ class ConfigManager(QObject):
                 }
                 self._current_preset = "Preset: Default"
                 self._save_configs(configs)
-                print("[DEBUG] Created new config.json with default preset")
+                logger.info("Created new config.json with default preset")
 
         except Exception as e:
-            print(f"[DEBUG] Error loading config: {str(e)}")
+            logger.error(f"Error loading config: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
 
     def _merge_with_template(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Merge loaded config with template to ensure all keys exist."""
@@ -130,11 +129,15 @@ class ConfigManager(QObject):
 
     def _save_configs(self, configs: Dict[str, Any]) -> None:
         """Save configs to file."""
+        logger = get_logger()
         try:
             with open(self._config_file, "w", encoding="utf-8") as f:
                 json.dump(configs, f, indent=2)
+            logger.debug(f"Saved configuration to {self._config_file}")
         except Exception as e:
-            print(f"[DEBUG] Error saving configs: {str(e)}")
+            logger.error(f"Error saving configs: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
 
     def get_config(self) -> Dict[str, Any]:
         """Get current configuration."""
@@ -191,10 +194,16 @@ class ConfigManager(QObject):
                     try:
                         callback()
                     except Exception as e:
-                        print(f"[DEBUG] Error in config change callback: {str(e)}")
+                        logger = get_logger()
+                        logger.error(f"Error in config change callback: {str(e)}")
+                        if hasattr(e, "__traceback__"):
+                            logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
 
             except Exception as e:
-                print(f"[DEBUG] Error updating configs: {str(e)}")
+                logger = get_logger()
+                logger.error(f"Error updating configs: {str(e)}")
+                if hasattr(e, "__traceback__"):
+                    logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
 
     def load_preset(self, preset_name: str) -> None:
         """Load a preset as the current configuration."""
@@ -226,13 +235,21 @@ class ConfigManager(QObject):
                         try:
                             callback()
                         except Exception as e:
-                            print(f"[DEBUG] Error in config change callback: {str(e)}")
+                            logger = get_logger()
+                            logger.error(f"Error in config change callback: {str(e)}")
+                            if hasattr(e, "__traceback__"):
+                                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
 
-                    print(f"[DEBUG] Loaded preset: {preset_name}")
+                    logger = get_logger()
+                    logger.info(f"Loaded preset: {preset_name}")
                 else:
-                    print(f"[DEBUG] Preset not found: {preset_name}")
+                    logger = get_logger()
+                    logger.warning(f"Preset not found: {preset_name}")
         except Exception as e:
-            print(f"[DEBUG] Error loading preset: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error loading preset: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
 
     def save_preset(self, preset_name: str) -> None:
         """Save current configuration as a named preset."""
@@ -257,9 +274,13 @@ class ConfigManager(QObject):
             # Save configs
             self._save_configs(configs)
 
-            print(f"[DEBUG] Saved preset: {preset_name}")
+            logger = get_logger()
+            logger.info(f"Saved preset: {preset_name}")
         except Exception as e:
-            print(f"[DEBUG] Error saving preset: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error saving preset: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
 
     def delete_preset(self, preset_name: str) -> None:
         """Delete a preset."""
@@ -297,11 +318,16 @@ class ConfigManager(QObject):
                     # Save configs
                     self._save_configs(configs)
 
-                    print(f"[DEBUG] Deleted preset: {preset_name}")
+                    logger = get_logger()
+                    logger.info(f"Deleted preset: {preset_name}")
                 else:
-                    print(f"[DEBUG] Preset not found: {preset_name}")
+                    logger = get_logger()
+                    logger.warning(f"Preset not found: {preset_name}")
         except Exception as e:
-            print(f"[DEBUG] Error deleting preset: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error deleting preset: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
 
     def get_preset_names(self) -> List[str]:
         """Get list of available preset names."""
@@ -316,7 +342,10 @@ class ConfigManager(QObject):
                     name for name in configs.keys() if name != "_last_used_preset"
                 ]
         except Exception as e:
-            print(f"[DEBUG] Error getting preset names: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error getting preset names: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
 
         return preset_names
 

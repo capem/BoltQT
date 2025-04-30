@@ -1,23 +1,29 @@
 from __future__ import annotations
-from typing import Optional, List
+
+import time
+import traceback
+from typing import List, Optional
+
 import fitz  # PyMuPDF
-from PyQt6.QtWidgets import (
-    QWidget,
-    QLabel,
-    QVBoxLayout,
-    QToolBar,
-    QToolButton,
-    QScrollArea,
-    QSizePolicy,
-    QFrame,
-)
+from PyQt6.QtCore import QEvent, QRect, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
-    QPixmap,
+    QAction,
     QImage,
     QKeySequence,
-    QAction,
+    QPixmap,
 )
-from PyQt6.QtCore import Qt, QEvent, pyqtSignal, QRect, QSize
+from PyQt6.QtWidgets import (
+    QFrame,
+    QLabel,
+    QScrollArea,
+    QSizePolicy,
+    QToolBar,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..utils.logger import get_logger
 from ..utils.pdf_manager import PDFManager
 
 
@@ -220,23 +226,23 @@ class PDFViewer(QWidget):
                 spacing: 5px;
                 padding: 2px;
             }
-            
+
             QToolButton {
                 border: 1px solid transparent;
                 border-radius: 4px;
                 padding: 4px;
                 margin: 2px;
             }
-            
+
             QToolButton:hover {
                 background-color: #f0f0f0;
                 border: 1px solid #e0e0e0;
             }
-            
+
             QToolButton:pressed {
                 background-color: #e0e0e0;
             }
-            
+
             QLabel {
                 margin: 0 10px;
                 color: #505050;
@@ -458,10 +464,13 @@ class PDFViewer(QWidget):
             if self.pdf_manager and current_path:
                 self.pdf_manager.close_current_pdf()
 
-            print(f"[DEBUG] PDF cleared and resources released: {current_path}")
+            logger = get_logger()
+            logger.debug(f"PDF cleared and resources released: {current_path}")
 
         except Exception as e:
-            print(f"[DEBUG] Error during PDF cleanup: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error during PDF cleanup: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
     def display_pdf(
         self,
@@ -523,18 +532,19 @@ class PDFViewer(QWidget):
 
                 except Exception as e:
                     if attempt < retry_count - 1:
-                        print(
-                            f"[DEBUG] Retry {attempt + 1}: Error loading PDF: {str(e)}"
+                        logger = get_logger()
+                        logger.warning(
+                            f"Retry {attempt + 1}: Error loading PDF: {str(e)}"
                         )
-                        import time
-
                         time.sleep(0.5)  # Short delay between retries
                         continue
                     raise  # Re-raise the last exception if all retries failed
 
         except Exception as e:
+            logger = get_logger()
             error_msg = f"Error displaying PDF: {str(e)}"
-            print(f"[DEBUG] {error_msg}")
+            logger.error(error_msg)
+            logger.error(f"Traceback: {traceback.format_exc()}")
             self.current_pdf = None  # Ensure we don't keep reference to failed load
             self.pdfLoaded.emit(False)
 
@@ -564,7 +574,9 @@ class PDFViewer(QWidget):
             self._update_page_indicator()
 
         except Exception as e:
-            print(f"[DEBUG] Error rendering PDF pages: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error rendering PDF pages: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
     def _render_page(self, page_num: int) -> None:
         """Render a specific page of the PDF document.
@@ -578,7 +590,8 @@ class PDFViewer(QWidget):
         try:
             # Get the page widget
             if page_num >= len(self.page_container.page_widgets):
-                print(f"[DEBUG] Page widget not found for page {page_num}")
+                logger = get_logger()
+                logger.warning(f"Page widget not found for page {page_num}")
                 return
 
             page_widget = self.page_container.page_widgets[page_num]
@@ -615,7 +628,9 @@ class PDFViewer(QWidget):
             page_widget.setFixedSize(pixmap.size())
 
         except Exception as e:
-            print(f"[DEBUG] Error rendering page {page_num}: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error rendering page {page_num}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             if page_num < len(self.page_container.page_widgets):
                 self.page_container.page_widgets[page_num].setText(
                     f"Error rendering page {page_num + 1}:\n{str(e)}"
@@ -738,7 +753,9 @@ class PDFViewer(QWidget):
             self._programmatic_scroll = False
 
         except Exception as e:
-            print(f"[DEBUG] Error jumping to page {page_num}: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error jumping to page {page_num}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             self._programmatic_scroll = False
 
     def fit_width(self) -> None:

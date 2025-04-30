@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Dict, Optional, Tuple, List, Any, Callable
 import pandas as pd
+from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.worksheet.hyperlink import Hyperlink
 from PyQt6.QtCore import QObject, QReadWriteLock
@@ -8,6 +9,7 @@ from shutil import copy2
 from os import path, remove
 import traceback
 from .path_utils import normalize_path, make_relative_path, split_drive_or_unc
+from .logger import get_logger
 
 
 class ExcelManager(QObject):
@@ -27,6 +29,7 @@ class ExcelManager(QObject):
 
     def clear_caches(self) -> None:
         """Clear all cached data."""
+        logger = get_logger()
         self._cache_lock.lockForWrite()
         try:
             self._hyperlink_cache.clear()
@@ -36,7 +39,7 @@ class ExcelManager(QObject):
             self._column_cache.clear()
             self._header_cache.clear()
             self.excel_data = None
-            print("[DEBUG] All caches cleared")
+            logger.debug("All Excel caches cleared")
         finally:
             self._cache_lock.unlock()
 
@@ -57,6 +60,8 @@ class ExcelManager(QObject):
             return False
 
         try:
+            logger = get_logger()
+
             # Check if we need to reload
             if (
                 not force_reload
@@ -64,10 +69,10 @@ class ExcelManager(QObject):
                 and self._last_file == file_path
                 and self._last_sheet == sheet_name
             ):
-                print(f"[DEBUG] Using cached Excel data (force_reload={force_reload})")
+                logger.debug(f"Using cached Excel data (force_reload={force_reload})")
                 return False
 
-            print(f"[DEBUG] Loading Excel data from {file_path}, sheet: {sheet_name}")
+            logger.debug(f"Loading Excel data from {file_path}, sheet: {sheet_name}")
 
             # Try to normalize path for network paths
             normalized_path = file_path
@@ -80,9 +85,9 @@ class ExcelManager(QObject):
                         normalized_path = f"\\\\{parts[0]}\\{parts[1]}"
                         if len(parts) > 2:
                             normalized_path += "\\" + "\\".join(parts[2:])
-                    print(f"[DEBUG] Normalized network path: {normalized_path}")
+                    logger.debug(f"Normalized network path: {normalized_path}")
                 except Exception as path_err:
-                    print(f"[DEBUG] Path normalization error: {str(path_err)}")
+                    logger.warning(f"Path normalization error: {str(path_err)}")
 
             # Load the data
             try:
@@ -90,9 +95,7 @@ class ExcelManager(QObject):
                     normalized_path, sheet_name=sheet_name, engine="openpyxl"
                 )
             except OSError:
-                print(
-                    "[DEBUG] Failed to read with normalized path, trying original path"
-                )
+                logger.debug("Failed to read with normalized path, trying original path")
                 # If normalized path fails, try the original path
                 self.excel_data = pd.read_excel(
                     file_path, sheet_name=sheet_name, engine="openpyxl"
@@ -106,7 +109,7 @@ class ExcelManager(QObject):
             self._cache_lock.lockForWrite()
             try:
                 self._hyperlink_cache.clear()
-                print("[DEBUG] Hyperlink cache cleared during data load")
+                logger.debug("Hyperlink cache cleared during data load")
             finally:
                 self._cache_lock.unlock()
 
@@ -118,7 +121,11 @@ class ExcelManager(QObject):
             return True
 
         except Exception as e:
-            print(f"[DEBUG] Error loading Excel data: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error loading Excel data: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
+
             self.excel_data = None
             self._last_file = None
             self._last_sheet = None
@@ -136,7 +143,8 @@ class ExcelManager(QObject):
         progress_callback: Optional[Callable[[int], None]] = None,
     ) -> None:
         """Preload all hyperlinks from the sheet into the cache asynchronously."""
-        print(f"[DEBUG] Starting hyperlink preloading for {file_path} - {sheet_name}")
+        logger = get_logger()
+        logger.info(f"Starting hyperlink preloading for {file_path} - {sheet_name}")
         self._cache_lock.lockForWrite()
         try:
             self._hyperlink_cache.clear()
@@ -150,30 +158,34 @@ class ExcelManager(QObject):
                         normalized_path = f"\\\\{parts[0]}\\{parts[1]}"
                         if len(parts) > 2:
                             normalized_path += "\\" + "\\".join(parts[2:])
-                    print(f"[DEBUG] Normalized network path for preloading: {normalized_path}")
+                    logger.debug(f"Normalized network path for preloading: {normalized_path}")
                 except Exception as path_err:
-                    print(f"[DEBUG] Path normalization error during preloading: {str(path_err)}")
+                    logger.warning(f"Path normalization error during preloading: {str(path_err)}")
 
             try:
                 # Load workbook WITHOUT read_only=True to access hyperlinks
                 wb = load_workbook(normalized_path, data_only=True)
             except Exception:
-                print(f"[DEBUG] Failed preload with normalized path, trying original: {file_path}")
+                logger.debug(f"Failed preload with normalized path, trying original: {file_path}")
                 try:
                     # Load workbook WITHOUT read_only=True to access hyperlinks
                     wb = load_workbook(file_path, data_only=True)
                 except Exception as wb_err:
-                    print(f"[DEBUG] Could not load workbook for preloading: {str(wb_err)}")
+                    logger.error(f"Could not load workbook for preloading: {str(wb_err)}")
+                    if hasattr(wb_err, "__traceback__"):
+                        logger.error(f"Traceback: {traceback.format_exception(type(wb_err), wb_err, wb_err.__traceback__)}")
                     return # Exit if workbook can't be loaded
 
             try:
                 ws = wb[sheet_name]
             except KeyError:
-                print(f"[DEBUG] Sheet '{sheet_name}' not found during preloading.")
+                logger.warning(f"Sheet '{sheet_name}' not found during preloading.")
                 wb.close()
                 return
             except Exception as sheet_err:
-                print(f"[DEBUG] Error accessing sheet during preloading: {str(sheet_err)}")
+                logger.error(f"Error accessing sheet during preloading: {str(sheet_err)}")
+                if hasattr(sheet_err, "__traceback__"):
+                    logger.error(f"Traceback: {traceback.format_exception(type(sheet_err), sheet_err, sheet_err.__traceback__)}")
                 wb.close()
                 return
 
@@ -190,10 +202,10 @@ class ExcelManager(QObject):
                             cache_key = (row_idx, col_idx)
                             self._hyperlink_cache[cache_key] = target
                             # --- Add Debug Print ---
-                            # print(f"[DEBUG PRELOAD] Added to cache: key={cache_key}, target='{target}'")
+                            # logger.debug(f"Added to cache: key={cache_key}, target='{target}'")
                             # --- End Debug Print ---
                         except Exception as link_err:
-                            print(f"[DEBUG] Error reading hyperlink at ({row_idx}, {col_idx}): {str(link_err)}")
+                            logger.warning(f"Error reading hyperlink at ({row_idx}, {col_idx}): {str(link_err)}")
                             self._hyperlink_cache[(row_idx, col_idx)] = None # Mark as checked but failed
 
                 processed_rows += 1
@@ -202,12 +214,14 @@ class ExcelManager(QObject):
                     progress_callback(progress)
 
             wb.close()
-            print(f"[DEBUG] Finished hyperlink preloading. Cached {len(self._hyperlink_cache)} links.")
+            logger.info(f"Finished hyperlink preloading. Cached {len(self._hyperlink_cache)} links.")
             if progress_callback:
                 progress_callback(100) # Signal completion
 
         except Exception as e:
-            print(f"[DEBUG] Error during hyperlink preloading: {str(e)}")
+            logger.error(f"Error during hyperlink preloading: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
             # Keep potentially partially filled cache? Or clear? Clearing seems safer.
             self._hyperlink_cache.clear()
         finally:
@@ -220,7 +234,8 @@ class ExcelManager(QObject):
         progress_callback: Optional[Callable[[int], None]] = None,
     ) -> None:
         """Force a refresh of the hyperlink cache."""
-        print("[DEBUG] Refreshing hyperlink cache...")
+        logger = get_logger()
+        logger.info("Refreshing hyperlink cache...")
         # This can be called directly, potentially in a separate thread if needed
         self.preload_hyperlinks_async(file_path, sheet_name, progress_callback)
 
@@ -237,7 +252,8 @@ class ExcelManager(QObject):
         self._cache_lock.lockForRead()
         try:
             link = self._hyperlink_cache.get((row_idx, col_idx))
-            # print(f"[DEBUG] Cache lookup for ({row_idx}, {col_idx}): {'Found' if link else 'Not Found'}")
+            # logger = get_logger()
+            # logger.debug(f"Cache lookup for ({row_idx}, {col_idx}): {'Found' if link else 'Not Found'}")
             return link
         finally:
             self._cache_lock.unlock()
@@ -253,7 +269,10 @@ class ExcelManager(QObject):
                 self._header_cache[sheet_key] = header
                 wb.close()
             except Exception as e:
-                print(f"[DEBUG] Error caching header for {sheet_key}: {str(e)}")
+                logger = get_logger()
+                logger.error(f"Error caching header for {sheet_key}: {str(e)}")
+                if hasattr(e, "__traceback__"):
+                    logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
                 return None
 
         return self._header_cache[sheet_key].get(column_name)
@@ -272,15 +291,16 @@ class ExcelManager(QObject):
             Optional[str]: Original hyperlink if there was one, None otherwise
         """
         try:
-            print(
-                f"[DEBUG] Updating PDF link in Excel: file={file_path}, sheet={sheet_name}, row={row_idx}, column={column_name}"
+            logger = get_logger()
+            logger.info(
+                f"Updating PDF link in Excel: file={file_path}, sheet={sheet_name}, row={row_idx}, column={column_name}"
             )
 
             # Normalize paths using path_utils
             normalized_excel_path = normalize_path(file_path)
             normalized_pdf_path = normalize_path(pdf_path)
 
-            print(f"[DEBUG] Linking to PDF: {normalized_pdf_path}")
+            logger.debug(f"Linking to PDF: {normalized_pdf_path}")
 
             # Load workbook
             wb = load_workbook(file_path)
@@ -296,7 +316,7 @@ class ExcelManager(QObject):
             excel_row_1_based = row_idx + 2  # +1 for header, +1 for 1-based index
             cell = ws.cell(row=excel_row_1_based, column=col_idx_1_based)
 
-            print(f"[DEBUG] Excel cell: {cell.coordinate}, Current value: {cell.value}")
+            logger.debug(f"Excel cell: {cell.coordinate}, Current value: {cell.value}")
 
             # Store original hyperlink
             original_link = None
@@ -306,17 +326,17 @@ class ExcelManager(QObject):
                     if hasattr(cell.hyperlink, "target")
                     else str(cell.hyperlink)
                 )
-                print(f"[DEBUG] Found existing hyperlink: {original_link}")
+                logger.debug(f"Found existing hyperlink: {original_link}")
 
             # Use path_utils to determine if paths are on same drive/mount
             excel_drive, _ = split_drive_or_unc(normalized_excel_path)
             pdf_drive, _ = split_drive_or_unc(normalized_pdf_path)
 
-            print(f"[DEBUG] Excel mount: {excel_drive}, PDF mount: {pdf_drive}")
+            logger.debug(f"Excel mount: {excel_drive}, PDF mount: {pdf_drive}")
 
             # Calculate target path using path_utils make_relative_path
             target_path = make_relative_path(normalized_excel_path, normalized_pdf_path)
-            print(f"[DEBUG] Target path for hyperlink: {target_path}")
+            logger.debug(f"Target path for hyperlink: {target_path}")
 
             # Update hyperlink using Excel formula and styling
             hyperlink = Hyperlink(ref=cell.coordinate, target=target_path)
@@ -326,23 +346,26 @@ class ExcelManager(QObject):
 
             # Save workbook
             wb.save(file_path)
-            print(f"[DEBUG] Set HYPERLINK formula: {cell.value}")
-            print(f"[DEBUG] Updated Excel hyperlink, original: {original_link}")
-            print("[DEBUG] Excel file saved successfully")
+            logger.debug(f"Set HYPERLINK formula: {cell.value}")
+            logger.info(f"Updated Excel hyperlink, original: {original_link}")
+            logger.debug("Excel file saved successfully")
 
             # Update cache (acquire lock)
             self._cache_lock.lockForWrite()
             try:
                 # Use 0-based indices for cache key
                 self._hyperlink_cache[(row_idx, col_idx_0_based)] = target_path
-                print(f"[DEBUG] Updated cache for ({row_idx}, {col_idx_0_based})")
+                logger.debug(f"Updated cache for ({row_idx}, {col_idx_0_based})")
             finally:
                 self._cache_lock.unlock()
 
             return original_link
 
         except Exception as e:
-            print(f"[DEBUG] Error updating PDF link: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error updating PDF link: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
             return None
 
     def revert_pdf_link(
@@ -368,11 +391,12 @@ class ExcelManager(QObject):
             bool: True if successful, False otherwise.
         """
         try:
-            print(
-                f"[DEBUG] Reverting hyperlink for row {row_idx} in {excel_file}, sheet {sheet_name}"
+            logger = get_logger()
+            logger.info(
+                f"Reverting hyperlink for row {row_idx} in {excel_file}, sheet {sheet_name}"
             )
-            print(
-                f"[DEBUG] Original hyperlink: {original_hyperlink}, Original value: {original_value}"
+            logger.debug(
+                f"Original hyperlink: {original_hyperlink}, Original value: {original_value}"
             )
 
             wb = load_workbook(excel_file)
@@ -387,8 +411,8 @@ class ExcelManager(QObject):
             # Get the cell
             excel_row_1_based = row_idx + 2 # +1 header, +1 for 1-based index
             cell = ws.cell(row=excel_row_1_based, column=col_idx_1_based)
-            print(
-                f"[DEBUG] Identified Excel cell: {cell.coordinate}, Current value: {cell.value}"
+            logger.debug(
+                f"Identified Excel cell: {cell.coordinate}, Current value: {cell.value}"
             )
 
             # Update or remove hyperlink - handle different openpyxl versions
@@ -400,50 +424,50 @@ class ExcelManager(QObject):
                     )
                     hyperlink.target_mode = "file"
                     cell.hyperlink = hyperlink
-                    print(
-                        f"[DEBUG] Restored hyperlink using newer API: {original_hyperlink}"
+                    logger.debug(
+                        f"Restored hyperlink using newer API: {original_hyperlink}"
                     )
                 except TypeError as e:
                     try:
                         # Method 2: Direct assignment (older versions)
                         cell.hyperlink = original_hyperlink
-                        print(
-                            f"[DEBUG] Restored hyperlink using direct assignment: {original_hyperlink}"
+                        logger.debug(
+                            f"Restored hyperlink using direct assignment: {original_hyperlink}"
                         )
                     except Exception as e2:
-                        print(
-                            f"[DEBUG] Hyperlink methods failed: {str(e)}, {str(e2)}. Setting display text only."
+                        logger.warning(
+                            f"Hyperlink methods failed: {str(e)}, {str(e2)}. Setting display text only."
                         )
                         # Fallback: Set display text only
                         cell.value = f"{original_value} [Link:{original_hyperlink}]"
-                        print("[DEBUG] Set display text with link reference")
+                        logger.debug("Set display text with link reference")
             else:
                 # Remove hyperlink - handle different openpyxl versions
                 try:
                     cell.hyperlink = None
-                    print("[DEBUG] Removed hyperlink")
+                    logger.debug("Removed hyperlink")
                 except Exception as e:
                     # If direct removal fails, try other methods
                     try:
                         # Some versions may use cell._hyperlink
                         if hasattr(cell, "_hyperlink"):
                             cell._hyperlink = None
-                            print(
-                                "[DEBUG] Removed hyperlink using _hyperlink attribute"
+                            logger.debug(
+                                "Removed hyperlink using _hyperlink attribute"
                             )
                     except Exception as e2:
-                        print(
-                            f"[DEBUG] Failed to remove hyperlink: {str(e)}, {str(e2)}"
+                        logger.warning(
+                            f"Failed to remove hyperlink: {str(e)}, {str(e2)}"
                         )
 
             # Ensure cell value is restored
             if cell.value != original_value:
                 cell.value = original_value
-                print(f"[DEBUG] Restored cell value to: {original_value}")
+                logger.debug(f"Restored cell value to: {original_value}")
 
             # Save workbook
             wb.save(excel_file)
-            print("[DEBUG] Excel file saved successfully after reversion")
+            logger.debug("Excel file saved successfully after reversion")
 
             # Update cache (acquire lock)
             self._cache_lock.lockForWrite()
@@ -452,17 +476,20 @@ class ExcelManager(QObject):
                 cache_key = (row_idx, col_idx_0_based)
                 if original_hyperlink:
                     self._hyperlink_cache[cache_key] = original_hyperlink
-                    print(f"[DEBUG] Updated cache for {cache_key} with original link")
+                    logger.debug(f"Updated cache for {cache_key} with original link")
                 elif cache_key in self._hyperlink_cache:
                     del self._hyperlink_cache[cache_key]
-                    print(f"[DEBUG] Removed cache entry for {cache_key}")
+                    logger.debug(f"Removed cache entry for {cache_key}")
             finally:
                 self._cache_lock.unlock()
 
             return True
 
         except Exception as e:
-            print(f"[DEBUG] Error reverting PDF link: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error reverting PDF link: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
             return False
 
     def get_available_sheets(self, file_path: str) -> list[str]:
@@ -489,7 +516,10 @@ class ExcelManager(QObject):
             return sheet_names
 
         except Exception as e:
-            print(f"[DEBUG] Error getting sheet names: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error getting sheet names: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
             raise
 
     def get_sheet_columns(self, file_path: str, sheet_name: str) -> list[str]:
@@ -524,7 +554,10 @@ class ExcelManager(QObject):
             return column_names
 
         except Exception as e:
-            print(f"[DEBUG] Error getting column names: {str(e)}")
+            logger = get_logger()
+            logger.error(f"Error getting column names: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
             raise
 
     def add_new_row(
@@ -540,8 +573,9 @@ class ExcelManager(QObject):
             Tuple[Dict[str, Any], int]: Dictionary of row data and the row index
         """
         try:
-            print(
-                f"[DEBUG] Cache state before adding new row - size: {len(self._hyperlink_cache)}"
+            logger = get_logger()
+            logger.debug(
+                f"Cache state before adding new row - size: {len(self._hyperlink_cache)}"
             )
 
             # Validate input
@@ -550,12 +584,12 @@ class ExcelManager(QObject):
                     f"Number of columns ({len(columns)}) and values ({len(values)}) must match"
                 )
 
-            print(f"[DEBUG] Adding new row with values: {dict(zip(columns, values))}")
+            logger.info(f"Adding new row with values: {dict(zip(columns, values))}")
 
             # Create a backup
             backup_file = file_path + ".bak"
             copy2(file_path, backup_file)
-            print(f"[DEBUG] Created backup at {backup_file}")
+            logger.debug(f"Created backup at {backup_file}")
 
             try:
                 # Load workbook
@@ -584,10 +618,10 @@ class ExcelManager(QObject):
                         if len(ref_parts) == 2:
                             end_ref = ref_parts[1]
                             table_end_row = int("".join(filter(str.isdigit, end_ref)))
-                            print(f"[DEBUG] Found table with end row: {table_end_row}")
+                            logger.debug(f"Found table with end row: {table_end_row}")
                             break  # Use the first table found
                     except Exception as e:
-                        print(f"[DEBUG] Error processing table reference: {str(e)}")
+                        logger.error(f"Error processing table reference: {str(e)}")
                         continue
 
                 # If we found a table, add the row immediately after it
@@ -597,18 +631,18 @@ class ExcelManager(QObject):
                     # Fallback to adding at the end if no table found
                     new_row = ws.max_row + 1
 
-                print(
-                    f"[DEBUG] Adding row at index {new_row - 2} (Excel row {new_row})"
+                logger.debug(
+                    f"Adding row at index {new_row - 2} (Excel row {new_row})"
                 )
 
                 # First pass: Copy all formats from the template row (use row before new row)
                 template_row = new_row - 1
-                print(f"[DEBUG] Using template row {template_row} for formatting")
+                logger.debug(f"Using template row {template_row} for formatting")
 
                 # Second pass: Set values with proper type conversion
                 for col, val in zip(columns, values):
                     col_idx = col_indices[col]
-                    template_cell = ws.cell(row=template_row, column=col_idx)
+                    # Get the cell in the new row
                     new_cell = ws.cell(row=new_row, column=col_idx)
 
                     # Convert value based on the column type
@@ -625,8 +659,6 @@ class ExcelManager(QObject):
 
                             for fmt in date_formats:
                                 try:
-                                    from datetime import datetime
-
                                     date_val = datetime.strptime(val, fmt)
                                     break
                                 except ValueError:
@@ -641,8 +673,8 @@ class ExcelManager(QObject):
                                 new_cell.value = date_val.to_pydatetime()
                                 new_cell.number_format = "DD/MM/YYYY"
                         except Exception as e:
-                            print(
-                                f"[DEBUG] Could not parse date '{val}' for column '{col}': {str(e)}"
+                            logger.warning(
+                                f"Could not parse date '{val}' for column '{col}': {str(e)}"
                             )
                             new_cell.value = val
                     elif "MNT" in col.upper() or "MONTANT" in col.upper():
@@ -655,17 +687,17 @@ class ExcelManager(QObject):
                             new_cell.style = "Comma"
                         except Exception as e:
                             new_cell.value = val
-                            print(
-                                f"[DEBUG] Could not parse number '{val}' for column '{col}': {str(e)}"
+                            logger.warning(
+                                f"Could not parse number '{val}' for column '{col}': {str(e)}"
                             )
                     else:
                         new_cell.value = val
 
-                    print(f"[DEBUG] Set value '{val}' for column '{col}'")
+                    logger.debug(f"Set value '{val}' for column '{col}'")
 
                 # Check and expand table ranges to include the new row
                 if table_end_row:
-                    print("[DEBUG] Checking for tables that need to be expanded")
+                    logger.debug("Checking for tables that need to be expanded")
                     for table in ws.tables.values():
                         try:
                             current_ref = table.ref
@@ -689,11 +721,11 @@ class ExcelManager(QObject):
                                 # Create new reference that includes the new row
                                 new_ref = f"{start_col}{start_row}:{end_col}{new_row}"
                                 table.ref = new_ref
-                                print(
-                                    f"[DEBUG] Expanded table '{table.displayName}' range to {new_ref}"
+                                logger.debug(
+                                    f"Expanded table '{table.displayName}' range to {new_ref}"
                                 )
                         except Exception as table_e:
-                            print(f"[DEBUG] Error expanding table: {str(table_e)}")
+                            logger.warning(f"Error expanding table: {str(table_e)}")
                             # Continue with other tables even if one fails
                             continue
 
@@ -736,9 +768,9 @@ class ExcelManager(QObject):
                 # Remove backup after successful write
                 if path.exists(backup_file):
                     remove(backup_file)
-                    print("[DEBUG] Removed backup file after successful write")
+                    logger.debug("Removed backup file after successful write")
 
-                print(f"[DEBUG] Successfully added new row at index {row_idx}")
+                logger.info(f"Successfully added new row at index {row_idx}")
                 return row_data, row_idx
 
             finally:
@@ -746,15 +778,18 @@ class ExcelManager(QObject):
                     wb.close()
 
         except Exception as e:
-            print(f"[DEBUG] Error adding new row: {str(e)}")
-            print(f"[DEBUG] Error details: {traceback.format_exc()}")
+            logger = get_logger()
+            logger.error(f"Error adding new row: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
             # Try to restore from backup
             if "backup_file" in locals() and path.exists(backup_file):
                 try:
                     copy2(backup_file, file_path)
-                    print("[DEBUG] Restored from backup after error")
+                    logger.info("Restored from backup after error")
                 except Exception as backup_e:
-                    print(f"[DEBUG] Failed to restore from backup: {str(backup_e)}")
+                    logger.error(f"Failed to restore from backup: {str(backup_e)}")
+                    if hasattr(backup_e, "__traceback__"):
+                        logger.error(f"Backup restore traceback: {traceback.format_exception(type(backup_e), backup_e, backup_e.__traceback__)}")
 
             raise

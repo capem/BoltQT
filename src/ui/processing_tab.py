@@ -1,33 +1,38 @@
 from __future__ import annotations
-from typing import Optional, Any, Callable
-from datetime import datetime
-import time
-import os
-import json
 
+import json
+import os
+import re
+import time
+import traceback
+from datetime import datetime
+from threading import Thread
+from typing import Any, Callable, Optional
+
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QLabel,
-    QPushButton,
-    QFrame,
-    QSplitter,
     QApplication,
     QFileDialog,
-    QMessageBox,
+    QFrame,
     QHBoxLayout,
-    QSizePolicy,
+    QLabel,
     QMenu,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 
 from ..utils import ConfigManager, ExcelManager, PDFManager, PDFTask
-from ..utils.vision_manager import VisionManager, FuzzyMatcher
+from ..utils.logger import get_logger
 from ..utils.processing_thread import ProcessingThread
+from ..utils.vision_manager import FuzzyMatcher, VisionManager
 from .fuzzy_search import FuzzySearchFrame
-from .queue_display import QueueDisplay
-from .pdf_viewer import PDFViewer
 from .loading_overlay import LoadingOverlay
+from .pdf_viewer import PDFViewer
+from .queue_display import QueueDisplay
 
 
 # Create a signal relay object to safely pass signals from background threads to UI
@@ -82,7 +87,9 @@ class ProcessingTab(QWidget):
         self.current_pdf_start_time: Optional[datetime] = None
         self.filter_frames = []
         self._vision_mode = False  # Flag to indicate we're using vision results
-        self.loading_overlay: LoadingOverlay | None = None # Added for loading indicator
+        self.loading_overlay: LoadingOverlay | None = (
+            None  # Added for loading indicator
+        )
 
         # Initialize processing thread with managers
         self.processing_thread = ProcessingThread(
@@ -236,8 +243,12 @@ class ProcessingTab(QWidget):
         skip_menu = QMenu(self.skip_button)
         skip_in_place_action = skip_menu.addAction("Skip (Keep in Place)")
         skip_to_folder_action = skip_menu.addAction("Skip to Folder")
-        skip_in_place_action.triggered.connect(lambda: self._skip_current_file("in_place"))
-        skip_to_folder_action.triggered.connect(lambda: self._skip_current_file("to_folder"))
+        skip_in_place_action.triggered.connect(
+            lambda: self._skip_current_file("in_place")
+        )
+        skip_to_folder_action.triggered.connect(
+            lambda: self._skip_current_file("to_folder")
+        )
         self.skip_button.setMenu(skip_menu)
         actions_layout.addWidget(self.skip_button)
 
@@ -441,9 +452,10 @@ class ProcessingTab(QWidget):
         if self.filter_frames:
             self._load_filter_values(0)
 
-    def _format_filter2_value(self, value: str, row_idx: int) -> str: # Removed has_hyperlink param
+    def _format_filter2_value(
+        self, value: str, row_idx: int
+    ) -> str:  # Removed has_hyperlink param
         """Format filter2 value with row number and checkmark if hyperlinked (using cache)."""
-        import re
 
         has_hyperlink = False
         # Check cache for hyperlink if filter 2 exists
@@ -460,10 +472,15 @@ class ProcessingTab(QWidget):
                 )
                 if col_idx_0_based is not None:
                     # Check cache using 0-based row and column indices
-                    cached_link = self.excel_manager.get_hyperlink(row_idx, col_idx_0_based)
-                    # --- Add Debug Print ---
-                    print(f"[DEBUG FORMAT] row={row_idx}, col={col_idx_0_based} ('{filter2_column_name}'), cached_link='{cached_link}', has_hyperlink={bool(cached_link)}")
-                    # --- End Debug Print ---
+                    cached_link = self.excel_manager.get_hyperlink(
+                        row_idx, col_idx_0_based
+                    )
+                    # --- Add Debug Log ---
+                    logger = get_logger()
+                    logger.debug(
+                        f"FORMAT: row={row_idx}, col={col_idx_0_based} ('{filter2_column_name}'), cached_link='{cached_link}', has_hyperlink={bool(cached_link)}"
+                    )
+                    # --- End Debug Log ---
                     has_hyperlink = bool(cached_link)
 
         # Check if value already contains Excel Row information
@@ -482,10 +499,10 @@ class ProcessingTab(QWidget):
 
     def _parse_filter2_value(self, formatted_value: str) -> tuple[str, int]:
         """Parse filter2 value to get original value and row number."""
-        import re
+        logger = get_logger()
 
         if not formatted_value:
-            print("[DEBUG] UI received empty filter2 value")
+            logger.debug("UI received empty filter2 value")
             return "", -1
 
         # Remove checkmark if present
@@ -494,12 +511,12 @@ class ProcessingTab(QWidget):
         if match:
             value = match.group(1).strip()
             row_num = int(match.group(2))
-            print(
-                f"[DEBUG] UI parsed filter2 value: '{formatted_value}' -> value='{value}', row={row_num - 2}"
+            logger.debug(
+                f"UI parsed filter2 value: '{formatted_value}' -> value='{value}', row={row_num - 2}"
             )
             return value, row_num - 2  # Convert back to 0-based index
 
-        print(f"[DEBUG] UI failed to parse filter2 value: '{formatted_value}'")
+        logger.debug(f"UI failed to parse filter2 value: '{formatted_value}'")
         return formatted_value, -1
 
     def _load_filter_values(self, filter_index: int = 0) -> None:
@@ -511,8 +528,9 @@ class ProcessingTab(QWidget):
 
             # If in vision mode, don't reload filter values to avoid clearing vision-populated fields
             if self._vision_mode and filter_index > 0:
-                print(
-                    f"[DEBUG] Skipping filter values reload for filter {filter_index + 1} in vision mode"
+                logger = get_logger()
+                logger.debug(
+                    f"Skipping filter values reload for filter {filter_index + 1} in vision mode"
                 )
                 return
 
@@ -524,7 +542,8 @@ class ProcessingTab(QWidget):
                     )
                 except OSError as e:
                     # Handle file access error gracefully
-                    print(f"[DEBUG] Excel file access error: {str(e)}")
+                    logger = get_logger()
+                    logger.error(f"Excel file access error: {str(e)}")
                     self._show_warning(
                         f"Could not access Excel file: {config['excel_file']}\n"
                         f"Error: {str(e)}\n\n"
@@ -536,7 +555,9 @@ class ProcessingTab(QWidget):
                     return
                 except Exception as e:
                     # Handle other Excel loading errors
-                    print(f"[DEBUG] Excel loading error: {str(e)}")
+                    logger = get_logger()
+                    logger.error(f"Excel loading error: {str(e)}")
+                    logger.error(f"Traceback: {traceback.format_exc()}")
                     self._show_warning(
                         f"Error loading Excel data from {config['excel_file']}:\n"
                         f"{str(e)}\n\n"
@@ -572,27 +593,29 @@ class ProcessingTab(QWidget):
                     )
                     selected_value = clean_value
                     row_idx = parsed_row_idx
-                    print(
-                        f"[DEBUG] Parsed filter2: value='{clean_value}', row_idx={row_idx}"
+                    logger = get_logger()
+                    logger.debug(
+                        f"Parsed filter2: value='{clean_value}', row_idx={row_idx}"
                     )
                 # For filter3 and beyond, check row_idx
                 if i > 1:
                     # Clear and return if no valid row_idx from filter2 (unless in vision mode)
                     if row_idx < 0 or row_idx not in filtered_df.index:
+                        logger = get_logger()
                         if self._vision_mode:
-                            print(
-                                f"[DEBUG] Invalid row_idx {row_idx} for filter {i + 1}, but continuing in vision mode"
+                            logger.debug(
+                                f"Invalid row_idx {row_idx} for filter {i + 1}, but continuing in vision mode"
                             )
                         else:
-                            print(
-                                f"[DEBUG] No valid row_idx for filter {i + 1}, clearing all subsequent filters"
+                            logger.debug(
+                                f"No valid row_idx for filter {i + 1}, clearing all subsequent filters"
                             )
                             for idx in range(i, len(self.filter_frames)):
                                 self.filter_frames[idx]["fuzzy"].clear()
                             return
                     else:
                         filtered_df = filtered_df.loc[[row_idx]]
-                        print(f"[DEBUG] Applied row_idx filter: {row_idx}")
+                        logger.debug(f"Applied row_idx filter: {row_idx}")
                         break
                 else:
                     # Apply standard column filter for filter1 and filter2
@@ -626,29 +649,30 @@ class ProcessingTab(QWidget):
                 # For filter3 and beyond, must have valid row_idx from filter2 (unless in vision mode)
                 if filter_index > 1:
                     filter2_value = self.filter_frames[1]["fuzzy"].get()
+                    logger = get_logger()
                     if not filter2_value:
-                        print(
-                            "[DEBUG] No filter2 value selected, keeping subsequent filters empty"
+                        logger.debug(
+                            "No filter2 value selected, keeping subsequent filters empty"
                         )
                         return
 
                     _, row_idx = self._parse_filter2_value(filter2_value)
                     if row_idx < 0 or row_idx not in filtered_df.index:
                         if self._vision_mode:
-                            print(
-                                f"[DEBUG] Invalid row_idx from filter2, but continuing in vision mode for filter {filter_index + 1}"
+                            logger.debug(
+                                f"Invalid row_idx from filter2, but continuing in vision mode for filter {filter_index + 1}"
                             )
                         else:
-                            print(
-                                f"[DEBUG] No valid row_idx from filter2, keeping filter {filter_index + 1} empty"
+                            logger.debug(
+                                f"No valid row_idx from filter2, keeping filter {filter_index + 1} empty"
                             )
                             return
 
                     # Use only the specific row for valid row_idx
                     if row_idx >= 0 and row_idx in filtered_df.index:
                         filtered_df = filtered_df.loc[[row_idx]]
-                        print(
-                            f"[DEBUG] Using row_idx {row_idx} for filter {filter_index + 1}"
+                        logger.debug(
+                            f"Using row_idx {row_idx} for filter {filter_index + 1}"
                         )
 
                 # Get unique values from filtered data
@@ -659,12 +683,13 @@ class ProcessingTab(QWidget):
 
             # Format date values to dd/mm/yyyy format only if the column name contains "DATE"
             column_name = self.filter_frames[filter_index]["column"]
-            print(
-                f"[DEBUG] Column name check: '{column_name}', contains 'DATE': {'DATE' in column_name.upper()}"
+            logger = get_logger()
+            logger.debug(
+                f"Column name check: '{column_name}', contains 'DATE': {'DATE' in column_name.upper()}"
             )
 
             if "DATE" in column_name.upper():
-                print(f"[DEBUG] Formatting dates for column: {column_name}")
+                logger.debug(f"Formatting dates for column: {column_name}")
                 formatted_values = []
                 for value in values:
                     original_value = value
@@ -692,8 +717,8 @@ class ProcessingTab(QWidget):
                                     date_obj = datetime.strptime(value, fmt)
                                     # Format to dd/mm/yyyy
                                     new_value = date_obj.strftime("%d/%m/%Y")
-                                    print(
-                                        f"[DEBUG] Date converted: '{value}' using format '{fmt}' -> '{new_value}'"
+                                    logger.debug(
+                                        f"Date converted: '{value}' using format '{fmt}' -> '{new_value}'"
                                     )
                                     value = new_value
                                     formatted = True
@@ -702,25 +727,26 @@ class ProcessingTab(QWidget):
                                     continue
 
                             if not formatted:
-                                print(f"[DEBUG] Could not parse date: '{value}'")
+                                logger.debug(f"Could not parse date: '{value}'")
                     except Exception as e:
-                        print(f"[DEBUG] Error parsing date '{value}': {str(e)}")
+                        logger.error(f"Error parsing date '{value}': {str(e)}")
+                        logger.error(f"Traceback: {traceback.format_exc()}")
                         # If any error occurs during date parsing, keep the original value
                         pass
 
                     if original_value != value:
-                        print(
-                            f"[DEBUG] Date formatting changed: '{original_value}' -> '{value}'"
+                        logger.debug(
+                            f"Date formatting changed: '{original_value}' -> '{value}'"
                         )
 
                     formatted_values.append(value)
 
-                print(f"[DEBUG] Setting {len(formatted_values)} formatted date values")
+                logger.debug(f"Setting {len(formatted_values)} formatted date values")
                 self.filter_frames[filter_index]["fuzzy"].set_values(formatted_values)
             else:
                 # For non-date columns, use values as is
-                print(
-                    f"[DEBUG] Using {len(values)} unformatted values for non-date column: {column_name}"
+                logger.debug(
+                    f"Using {len(values)} unformatted values for non-date column: {column_name}"
                 )
                 self.filter_frames[filter_index]["fuzzy"].set_values(values)
 
@@ -745,7 +771,7 @@ class ProcessingTab(QWidget):
         # Update next filter's values
         self._load_filter_values(filter_index + 1)
 
-    def _handle_filter_tab(self, event: Any, filter_index: int) -> str:
+    def _handle_filter_tab(self, _event: Any, filter_index: int) -> str:
         """Handle tab key in filter."""
         if filter_index < len(self.filter_frames) - 1:
             # Move to next filter
@@ -762,7 +788,10 @@ class ProcessingTab(QWidget):
         Vision preprocessing may have happened earlier to populate the filters,
         but this is the actual processing task that will be tracked in the queue.
         """
+        logger = get_logger()
+
         if not self.current_pdf:
+            logger.info("Process attempted with no file selected")
             self._update_status("No file selected")
             return
 
@@ -773,6 +802,7 @@ class ProcessingTab(QWidget):
         for i, frame in enumerate(self.filter_frames):
             value = frame["fuzzy"].get()
             if not value:
+                logger.info(f"Process attempted with empty filter {i + 1}")
                 self._update_status("All filters must be set")
                 return
 
@@ -782,8 +812,8 @@ class ProcessingTab(QWidget):
             # For filter2, extract the clean value without formatting
             if i == 1:
                 clean_value, row_idx = self._parse_filter2_value(value)
-                print(
-                    f"[DEBUG] Processing filter2 value: '{value}' -> clean='{clean_value}', row={row_idx}"
+                logger.debug(
+                    f"Processing filter2 value: '{value}' -> clean='{clean_value}', row={row_idx}"
                 )
                 value = clean_value
 
@@ -791,6 +821,7 @@ class ProcessingTab(QWidget):
 
         # Store the current PDF path before closing it
         current_pdf_path = self.current_pdf
+        logger.info(f"Processing file: {current_pdf_path}")
 
         # Clear the PDF from the viewer to release file handles
         self.pdf_viewer.clear_pdf()
@@ -807,15 +838,15 @@ class ProcessingTab(QWidget):
             _, row_idx = self._parse_filter2_value(formatted_filter_values[1])
             if row_idx >= 0:
                 task.row_idx = row_idx
-                print(
-                    f"[DEBUG] Pre-setting task row_idx to {row_idx} from filter2 value"
+                logger.debug(
+                    f"Pre-setting task row_idx to {row_idx} from filter2 value"
                 )
 
         # Add to processing queue
         self.processing_thread.tasks[task.task_id] = task
 
-        print(
-            f"[DEBUG] Added PDF processing task {task.task_id} to queue with filter values: {filter_values}"
+        logger.info(
+            f"Added PDF processing task {task.task_id} to queue with filter values: {filter_values}"
         )
 
         # Reset all fuzzy search inputs
@@ -907,7 +938,10 @@ class ProcessingTab(QWidget):
 
     def _skip_current_file(self, skip_type: str) -> None:
         """Skip the current file using the selected skip type."""
+        logger = get_logger()
+
         if not self.current_pdf:
+            logger.info("Skip attempted with no file selected")
             self._update_status("No file selected to skip")
             return
 
@@ -915,8 +949,10 @@ class ProcessingTab(QWidget):
         current_pdf_path = self.current_pdf
         current_pdf_start_time = self.current_pdf_start_time or datetime.now()
 
+        logger.info(f"Skipping file: {current_pdf_path} with skip type: {skip_type}")
+
         # First clear the PDF from the viewer to release file handles
-        print(f"[DEBUG] Clearing PDF viewer before skipping file: {current_pdf_path}")
+        logger.debug(f"Clearing PDF viewer before skipping file: {current_pdf_path}")
         self.pdf_viewer.clear_pdf()
 
         # Reset state variables
@@ -934,17 +970,26 @@ class ProcessingTab(QWidget):
         if skip_type == "to_folder":
             skip_folder = config.get("skip_folder", "")
             if not skip_folder:
-                QMessageBox.warning(self, "Skip Folder Not Set", "No skip folder is configured in settings.")
+                logger.warning("Skip folder not configured in settings")
+                QMessageBox.warning(
+                    self,
+                    "Skip Folder Not Set",
+                    "No skip folder is configured in settings.",
+                )
                 return
 
-            print(f"[DEBUG] Attempting to move skipped PDF to folder: {skip_folder}")
+            logger.debug(f"Attempting to move skipped PDF to folder: {skip_folder}")
             # Try to move the file
-            result = self.pdf_manager.move_skipped_pdf_to_folder(current_pdf_path, skip_folder)
+            result = self.pdf_manager.move_skipped_pdf_to_folder(
+                current_pdf_path, skip_folder
+            )
 
             if result is None:
                 # Failed to move the file - create a failed task instead of a skipped task
-                print(f"[DEBUG] Failed to move file to skip folder: {current_pdf_path}")
-                self._update_status("Failed to move file to skip folder. File marked as failed.")
+                logger.error(f"Failed to move file to skip folder: {current_pdf_path}")
+                self._update_status(
+                    "Failed to move file to skip folder. File marked as failed."
+                )
 
                 # Create failed task
                 task = PDFTask(
@@ -955,6 +1000,9 @@ class ProcessingTab(QWidget):
                     error_msg="Could not move file to skip folder - file may be locked",
                 )
                 self.processing_thread.tasks[task.task_id] = task
+                logger.info(
+                    f"Created failed task {task.task_id} for file that couldn't be moved"
+                )
 
                 # Load next PDF and return
                 self._load_next_pdf()
@@ -962,11 +1010,11 @@ class ProcessingTab(QWidget):
 
             # If we get here, the move was successful
             skipped_path = result
-            print(f"[DEBUG] Successfully moved file to skip folder: {skipped_path}")
+            logger.info(f"Successfully moved file to skip folder: {skipped_path}")
             self._update_status("File skipped and moved to skip folder.")
         else:
             # For in-place skipping, just mark the file as processed
-            print(f"[DEBUG] Skipping file in place: {current_pdf_path}")
+            logger.info(f"Skipping file in place: {current_pdf_path}")
             self.pdf_manager.mark_file_processed(current_pdf_path)
 
         # Create skipped task for tracking
@@ -978,20 +1026,21 @@ class ProcessingTab(QWidget):
             skip_type=skip_type,
         )
         self.processing_thread.tasks[task.task_id] = task
+        logger.info(f"Created skipped task {task.task_id} for {skipped_path}")
 
         # Load next PDF
         self._load_next_pdf()
 
-    def _load_next_pdf(self, skip: bool = False) -> None:
+    def _load_next_pdf(self, _skip: bool = False) -> None:
         """Load the next PDF file and optionally start vision preprocessing.
 
         This handles file loading, cleanup, and initiates vision preprocessing
         for filter auto-population, which is separate from the actual PDF processing.
         """
+        logger = get_logger()
         try:
-            print(
-                f"[DEBUG] _load_next_pdf called, current_pdf={self.current_pdf}"
-            )
+            logger.debug(f"Loading next PDF, current_pdf={self.current_pdf}")
+
             # Ensure proper cleanup of current PDF
             if self.current_pdf:
                 try:
@@ -1003,8 +1052,8 @@ class ProcessingTab(QWidget):
                             break
                         except Exception as e:
                             if attempt < retry_count - 1:
-                                print(
-                                    f"[DEBUG] Retry {attempt + 1}: Error clearing PDF: {str(e)}"
+                                logger.debug(
+                                    f"Retry {attempt + 1}: Error clearing PDF: {str(e)}"
                                 )
                                 time.sleep(0.5)  # Short delay between retries
                                 continue
@@ -1016,9 +1065,7 @@ class ProcessingTab(QWidget):
                     self._update_file_info_label()
 
                 except Exception as cleanup_error:
-                    print(
-                        f"[DEBUG] Warning: Error during PDF cleanup: {str(cleanup_error)}"
-                    )
+                    logger.warning(f"Error during PDF cleanup: {str(cleanup_error)}")
                     # Continue even if cleanup fails
 
             # Get config and validate
@@ -1048,15 +1095,15 @@ class ProcessingTab(QWidget):
                     break
                 except Exception as e:
                     if attempt < retry_count - 1:
-                        print(
-                            f"[DEBUG] Retry {attempt + 1}: Error getting next PDF: {str(e)}"
+                        logger.debug(
+                            f"Retry {attempt + 1}: Error getting next PDF: {str(e)}"
                         )
                         time.sleep(0.5)
                         continue
                     raise
 
             if next_pdf:
-                print(f"[DEBUG] Loading next PDF: {next_pdf}")
+                logger.info(f"Loading next PDF: {next_pdf}")
                 self.current_pdf = next_pdf
                 self.current_pdf_start_time = datetime.now()
 
@@ -1072,8 +1119,8 @@ class ProcessingTab(QWidget):
                 self._load_filter_values()
 
                 # Start vision preprocessing for auto-population, separate from PDF processing task
-                print(
-                    f"[DEBUG] Initiating vision preprocessing to auto-populate filters for {next_pdf}"
+                logger.debug(
+                    f"Initiating vision preprocessing to auto-populate filters for {next_pdf}"
                 )
                 self._start_vision_processing(next_pdf)
 
@@ -1083,6 +1130,7 @@ class ProcessingTab(QWidget):
 
                 self._update_status("Ready")
             else:
+                logger.info("No more PDF files to process")
                 self.current_pdf = None
                 self.current_pdf_start_time = None
                 self.pdf_viewer.display_pdf(None)
@@ -1107,23 +1155,24 @@ class ProcessingTab(QWidget):
         This is separate from the main PDF processing tasks and is only used
         to help populate form fields before the actual PDF processing begins.
         """
+        logger = get_logger()
         try:
             # Check if vision processing is enabled
             # Note: is_vision_enabled() will log the specific reason for being disabled
             if not self.vision_manager.is_vision_enabled():
+                logger.debug("Vision processing is disabled, skipping preprocessing")
                 return
 
-            print(f"[DEBUG] Starting vision preprocessing for {pdf_path}")
+            logger.info(f"Starting vision preprocessing for {pdf_path}")
 
             # --- Show Loading Overlay and Disable Filters ---
             if self.loading_overlay:
                 self.loading_overlay.show()
             for frame_info in self.filter_frames:
                 frame_info["fuzzy"].setEnabled(False)
-            QApplication.processEvents() # Ensure overlay and disabled state are visible
+            QApplication.processEvents()  # Ensure overlay and disabled state are visible
 
             # Create background thread for vision preprocessing
-            from threading import Thread
 
             def process_vision():
                 try:
@@ -1131,28 +1180,26 @@ class ProcessingTab(QWidget):
                     vision_result = self.vision_manager.preprocess_pdf(pdf_path)
 
                     if vision_result:
-                        print(f"[DEBUG] Vision preprocessing completed for {pdf_path}")
-                        print(
-                            f"[DEBUG] Vision result: {json.dumps(list(vision_result.keys()), indent=2)}"
+                        logger.info(f"Vision preprocessing completed for {pdf_path}")
+                        logger.debug(
+                            f"Vision result keys: {list(vision_result.keys())}"
                         )
 
                         # Emit signal to apply vision results in the main thread
-                        print(
-                            "[DEBUG] Emitting vision_result_ready signal to main thread"
+                        logger.debug(
+                            "Emitting vision_result_ready signal to main thread"
                         )
                         self.signal_relay.vision_result_ready.emit(
                             vision_result, pdf_path
                         )
                     else:
-                        print(
-                            f"[DEBUG] Vision preprocessing failed or is disabled for {pdf_path}"
+                        logger.warning(
+                            f"Vision preprocessing failed or is disabled for {pdf_path}"
                         )
 
                 except Exception as e:
-                    print(f"[DEBUG] Error in vision preprocessing thread: {str(e)}")
-                    import traceback
-
-                    print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+                    logger.error(f"Error in vision preprocessing thread: {str(e)}")
+                    logger.error(f"Error traceback: {traceback.format_exc()}")
 
             # Start background thread for vision preprocessing
             vision_thread = Thread(target=process_vision)
@@ -1160,10 +1207,8 @@ class ProcessingTab(QWidget):
             vision_thread.start()
 
         except Exception as e:
-            print(f"[DEBUG] Error starting vision preprocessing: {str(e)}")
-            import traceback
-
-            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+            logger.error(f"Error starting vision preprocessing: {str(e)}")
+            logger.error(f"Error traceback: {traceback.format_exc()}")
 
     def _on_vision_result_ready(self, vision_result: dict, pdf_path: str) -> None:
         """Handle vision results from background thread in the main thread.
@@ -1171,34 +1216,33 @@ class ProcessingTab(QWidget):
         This handles the auto-population of filters based on vision results,
         separate from the actual PDF processing tasks.
         """
+        logger = get_logger()
         try:
             # --- Hide Loading Overlay and Re-enable Filters ---
             # This runs when the signal arrives, regardless of success/failure in the thread
             if self.loading_overlay:
                 self.loading_overlay.hide()
             for frame_info in self.filter_frames:
-                 # Re-enable all filters. Subsequent logic might disable some based on selections.
+                # Re-enable all filters. Subsequent logic might disable some based on selections.
                 frame_info["fuzzy"].setEnabled(True)
-            QApplication.processEvents() # Ensure UI updates
+            QApplication.processEvents()  # Ensure UI updates
 
-            print(f"[DEBUG] Vision preprocessing result ready for {pdf_path}")
+            logger.debug(f"Vision preprocessing result ready for {pdf_path}")
 
             # Check if this is still the current PDF
             if not self.current_pdf or not self.pdf_manager._paths_equal(
                 self.current_pdf, pdf_path
             ):
-                print(
-                    f"[DEBUG] PDF has changed, not applying vision results (current: {self.current_pdf}, received: {pdf_path})"
+                logger.warning(
+                    f"PDF has changed, not applying vision results (current: {self.current_pdf}, received: {pdf_path})"
                 )
                 return
 
             # Apply the vision results to populate filters
             self._apply_vision_result(vision_result)
         except Exception as e:
-            print(f"[DEBUG] Error handling vision result: {str(e)}")
-            import traceback
-
-            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
+            logger.error(f"Error handling vision result: {str(e)}")
+            logger.error(f"Error traceback: {traceback.format_exc()}")
 
     def _apply_vision_result(self, vision_result: dict) -> None:
         """Apply vision preprocessing results to populate filter fields.
@@ -1207,34 +1251,34 @@ class ProcessingTab(QWidget):
         preprocessing results. This is entirely separate from the actual PDF processing
         task and happens before the user clicks 'Process File'.
         """
+        logger = get_logger()
         try:
-            print("[DEBUG] Applying vision preprocessing results to filters")
+            logger.info("Applying vision preprocessing results to filters")
 
             if not vision_result:
-                print("[DEBUG] No vision preprocessing result to apply")
+                logger.warning("No vision preprocessing result to apply")
                 return
 
-            print(
-                f"[DEBUG] Vision preprocessing result keys: {list(vision_result.keys())}"
+            logger.debug(
+                f"Vision preprocessing result keys: {list(vision_result.keys())}"
             )
 
             # Enable vision mode to bypass row validation during filter population
             # This is only for the filter population phase and not for actual processing
             self._vision_mode = True
-            print(
-                "[DEBUG] Enabling vision mode to bypass row validation for filter population"
+            logger.debug(
+                "Enabling vision mode to bypass row validation for filter population"
             )
 
             # Use normalized data if available (new approach), otherwise fall back to extracted_data (backward compatibility)
             normalized_data = vision_result.get("normalized_data", {})
 
-
             # Clear all filters before setting new values
             for frame in self.filter_frames:
                 frame["fuzzy"].clear()
 
-            print(
-                f"[DEBUG] Using normalized data for filter population: {json.dumps(normalized_data, indent=2)}"
+            logger.debug(
+                f"Using normalized data for filter population: {json.dumps(normalized_data, indent=2)}"
             )
 
             # Apply each filter value from normalized data
@@ -1248,19 +1292,21 @@ class ProcessingTab(QWidget):
 
                 # Check if we have this filter
                 if filter_index < 0 or filter_index >= len(self.filter_frames):
-                    print(f"[DEBUG] Filter index {filter_index} out of range, skipping")
+                    logger.warning(
+                        f"Filter index {filter_index} out of range, skipping"
+                    )
                     continue
 
-                print(
-                    f"[DEBUG] Setting {filter_key} (index {filter_index}) to '{filter_value}'"
+                logger.debug(
+                    f"Setting {filter_key} (index {filter_index}) to '{filter_value}'"
                 )
 
                 # For filter2, try to find a matching value with fuzzy search
                 if filter_index == 1:
                     # Get available values for filter2
                     available_values = self._get_available_filter_values(filter_index)
-                    print(
-                        f"[DEBUG] Available values for filter2: {len(available_values)}"
+                    logger.debug(
+                        f"Available values for filter2: {len(available_values)}"
                     )
 
                     if available_values:
@@ -1276,19 +1322,22 @@ class ProcessingTab(QWidget):
                         # Set the value (either match or raw value)
                         if match_result["match_found"]:
                             exact_match = match_result["best_match"]
-                            print(
-                                f"[DEBUG] Found fuzzy match for filter2: '{exact_match}' with score {match_result['confidence']}"
+                            logger.debug(
+                                f"Found fuzzy match for filter2: '{exact_match}' with score {match_result['confidence']}"
                             )
                             self.filter_frames[filter_index]["fuzzy"].set(exact_match)
                         else:
-                            print(
-                                f"[DEBUG] No match found for filter2 '{filter_value_str}' in Excel"
+                            logger.debug(
+                                f"No match found for filter2 '{filter_value_str}' in Excel"
                             )
                             self.filter_frames[filter_index]["fuzzy"].set(
                                 filter_value_str
                             )
                     else:
                         # No available values, set directly
+                        logger.debug(
+                            f"No available values for filter2, setting directly: '{filter_value}'"
+                        )
                         self.filter_frames[filter_index]["fuzzy"].set(str(filter_value))
                 else:
                     # For other filters, set value directly
@@ -1300,25 +1349,19 @@ class ProcessingTab(QWidget):
             # Update process button state
             self._update_process_button()
 
-            print(
-                "[DEBUG] Successfully applied vision preprocessing results to filters"
-            )
+            logger.info("Successfully applied vision preprocessing results to filters")
 
             # Disable vision mode after applying all values
             self._vision_mode = False
-            print("[DEBUG] Disabling vision mode after auto-population complete")
+            logger.debug("Disabling vision mode after auto-population complete")
 
         except Exception as e:
             # Make sure to reset vision mode in case of error
             self._vision_mode = False
-            print("[DEBUG] Disabling vision mode due to error")
+            logger.warning("Disabling vision mode due to error")
 
-            print(f"[DEBUG] Error applying vision preprocessing results: {str(e)}")
-            import traceback
-
-            print(f"[DEBUG] Error traceback: {traceback.format_exc()}")
-
-
+            logger.error(f"Error applying vision preprocessing results: {str(e)}")
+            logger.error(f"Error traceback: {traceback.format_exc()}")
 
     def _update_process_button(self) -> None:
         """Update the state of the process button."""
@@ -1352,6 +1395,7 @@ class ProcessingTab(QWidget):
         Note: This does NOT handle vision preprocessing, which is handled separately
         through the vision result signal system.
         """
+        logger = get_logger()
         if task_id in self.processing_thread.tasks:
             task = self.processing_thread.tasks[task_id]
             task.status = status
@@ -1359,7 +1403,7 @@ class ProcessingTab(QWidget):
 
             # If task is completed successfully, mark as processed but don't reload current PDF
             if status == "completed":
-                print(f"[DEBUG] PDF processing task completed successfully: {task_id}")
+                logger.info(f"PDF processing task completed successfully: {task_id}")
 
                 # Mark the source file as processed in our tracking system
                 # This ensures we won't pick it up again even if it's not deleted
@@ -1375,7 +1419,7 @@ class ProcessingTab(QWidget):
                     # Mark all unique paths as processed
                     for path in paths_to_mark:
                         self.pdf_manager.mark_file_processed(path)
-                        print(f"[DEBUG] Marked as processed: {os.path.basename(path)}")
+                        logger.debug(f"Marked as processed: {os.path.basename(path)}")
 
                 # Process events to ensure any pending database writes or file operations complete
                 QApplication.processEvents()
@@ -1386,14 +1430,14 @@ class ProcessingTab(QWidget):
                     and task.pdf_path
                     and self.pdf_manager._paths_equal(self.current_pdf, task.pdf_path)
                 ):
-                    print(
-                        f"[DEBUG] Loading next PDF after task completion (current PDF is {self.current_pdf})"
+                    logger.debug(
+                        f"Loading next PDF after task completion (current PDF is {self.current_pdf})"
                     )
                     # Use a timer to load the next PDF after a brief delay
                     QTimer.singleShot(1000, self._load_next_pdf)
                 else:
-                    print(
-                        f"[DEBUG] Keeping current PDF displayed: {os.path.basename(self.current_pdf)}"
+                    logger.debug(
+                        f"Keeping current PDF displayed: {os.path.basename(self.current_pdf)}"
                     )
 
                     # Just update the process button state without reloading
@@ -1401,17 +1445,23 @@ class ProcessingTab(QWidget):
 
     def _on_task_failed(self, task_id: str, error_msg: str) -> None:
         """Handle task failure."""
+        logger = get_logger()
         if task_id in self.processing_thread.tasks:
             task = self.processing_thread.tasks[task_id]
             task.status = "failed"
             task.error_msg = error_msg
             task.end_time = datetime.now()
+            logger.error(f"PDF processing task {task_id} failed: {error_msg}")
 
     def _on_config_change(self) -> None:
         """Handle configuration changes."""
+        logger = get_logger()
+
         # If we're already applying a config change, don't schedule another one
         if self._is_applying_config:
-            print("[DEBUG] Config change requested while already applying changes - ignoring")
+            logger.debug(
+                "Config change requested while already applying changes - ignoring"
+            )
             return
 
         # Cancel any pending operation
@@ -1420,6 +1470,7 @@ class ProcessingTab(QWidget):
             self._pending_config_change_id = None
 
         # Schedule the change with a delay to debounce multiple rapid changes
+        logger.debug("Scheduling config change with 250ms debounce delay")
         self._pending_config_change_id = self._update_timer.singleShot(
             250,  # 250ms delay
             self._apply_config_change,
@@ -1427,12 +1478,14 @@ class ProcessingTab(QWidget):
 
     def _apply_config_change(self) -> None:
         """Apply configuration changes."""
+        logger = get_logger()
+
         # Reset pending change ID
         self._pending_config_change_id = None
 
         # Set flag to prevent concurrent config changes
         self._is_applying_config = True
-        print("[DEBUG] Applying configuration changes...")
+        logger.info("Applying configuration changes...")
 
         try:
             # Store old config values for comparison
@@ -1451,10 +1504,12 @@ class ProcessingTab(QWidget):
                 self.vision_button.setToolTip(
                     "Vision processing is disabled in configuration"
                 )
+                logger.debug("Vision processing disabled in configuration")
             else:
                 self.vision_button.setToolTip(
                     "Manually run vision processing on current PDF"
                 )
+                logger.debug("Vision processing enabled in configuration")
 
             # Check if Excel file or sheet changed
             excel_changed = (
@@ -1463,7 +1518,9 @@ class ProcessingTab(QWidget):
 
             # Reload Excel data and refresh hyperlink cache if changed
             if excel_changed and new_excel_file and new_excel_sheet:
-                print("[DEBUG] Excel configuration changed, reloading data and cache...")
+                logger.info(
+                    f"Excel configuration changed, reloading data and cache: {new_excel_file}, sheet: {new_excel_sheet}"
+                )
                 self._update_status("Reloading Excel data and cache...")
                 try:
                     # Force reload of data
@@ -1476,12 +1533,16 @@ class ProcessingTab(QWidget):
                         new_excel_file, new_excel_sheet
                     )
                     self._update_status("Excel data and cache reloaded.")
+                    logger.info("Excel data and hyperlink cache successfully reloaded")
                 except Exception as e:
+                    logger.error(f"Error reloading Excel data: {str(e)}")
                     self._handle_error(e, "reloading Excel data after config change")
                     self._update_status("Error reloading Excel data.")
             elif excel_changed:
                 # Excel config removed or incomplete, clear data
-                print("[DEBUG] Excel configuration removed or incomplete, clearing data.")
+                logger.warning(
+                    "Excel configuration removed or incomplete, clearing data"
+                )
                 self.excel_manager.clear_caches()
 
             # Always rebuild filters and try loading next PDF
@@ -1491,19 +1552,25 @@ class ProcessingTab(QWidget):
         except Exception as e:
             # Handle any errors during config change
             self._handle_error(e, "applying configuration changes")
-            print(f"[DEBUG] Error during config change: {str(e)}")
+            logger.error(f"Error during config change: {str(e)}")
         finally:
             # Always reset the flag when done, even if an error occurred
             self._is_applying_config = False
-            print("[DEBUG] Configuration change completed")
+            logger.info("Configuration change completed")
 
     def closeEvent(self, event: Any) -> None:
         """Handle tab closure."""
+        logger = get_logger()
+        logger.info("Processing tab closing, stopping processing thread")
         self.processing_thread.stop()
         super().closeEvent(event)
 
     def _show_warning(self, message: str) -> None:
         """Show a non-blocking warning to the user."""
+        # Log the warning
+        logger = get_logger()
+        logger.warning(f"UI Warning: {message}")
+
         # Create message box with warning icon
         msg_box = QMessageBox(self)
         msg_box.setIcon(QMessageBox.Icon.Warning)
@@ -1522,8 +1589,18 @@ class ProcessingTab(QWidget):
 
     def _handle_error(self, error: Exception, context: str) -> None:
         """Handle errors in a way appropriate to their severity."""
+        # Get logger
+        logger = get_logger()
+
         # Log the error
-        print(f"[DEBUG] Error {context}: {str(error)}")
+        error_msg = f"Error {context}: {str(error)}"
+        logger.error(error_msg)
+
+        # Log traceback for debugging
+        if hasattr(error, "__traceback__"):
+            logger.error(
+                f"Traceback: {traceback.format_exception(type(error), error, error.__traceback__)}"
+            )
 
         # Determine if this is a critical error that should show a blocking dialog
         is_critical = True
@@ -1532,20 +1609,26 @@ class ProcessingTab(QWidget):
         # 1. Excel file access errors
         if isinstance(error, OSError) and "excel" in context.lower():
             is_critical = False
+            logger.warning(f"Non-critical Excel access error: {error_msg}")
             self._show_warning(f"Error {context}:\n{str(error)}")
 
         # 2. PDF loading errors
         elif "pdf" in context.lower() and "load" in context.lower():
             is_critical = False
+            logger.warning(f"Non-critical PDF loading error: {error_msg}")
             self._show_warning(f"Error {context}:\n{str(error)}")
 
         # 3. Excel data loading errors
         elif "excel" in context.lower() and "load" in context.lower():
             is_critical = False
+            logger.warning(f"Non-critical Excel data loading error: {error_msg}")
             self._show_warning(f"Error {context}:\n{str(error)}")
 
         # For critical errors, use the error handler
         if is_critical:
+            logger.error(
+                f"Critical error - delegating to main error handler: {error_msg}"
+            )
             self._error_handler(error, context)
 
         # Always update the status bar
@@ -1553,30 +1636,40 @@ class ProcessingTab(QWidget):
 
     def _get_available_filter_values(self, filter_index):
         """Get all available values for a specific filter."""
+        logger = get_logger()
         try:
             # Make sure filter frames exist
             if not self.filter_frames or filter_index >= len(self.filter_frames):
+                logger.debug(f"No filter frames available for index {filter_index}")
                 return []
 
             # Get values from the filter's fuzzy search
             fuzzy = self.filter_frames[filter_index]["fuzzy"]
             values = fuzzy.all_values
 
-            print(
-                f"[DEBUG] Got {len(values)} available values for filter {filter_index + 1}"
+            logger.debug(
+                f"Got {len(values)} available values for filter {filter_index + 1}"
             )
             return values
         except Exception as e:
-            print(f"[DEBUG] Error getting available filter values: {str(e)}")
+            logger.error(f"Error getting available filter values: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(
+                    f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}"
+                )
             return []
 
     def _manual_vision_processing(self) -> None:
         """Manually trigger vision preprocessing to populate filters for the current PDF."""
+        logger = get_logger()
+
         if not self.current_pdf:
+            logger.info("Manual vision processing attempted with no file loaded")
             self._update_status("No file loaded")
             return
 
         try:
+            logger.info(f"Starting manual vision preprocessing for {self.current_pdf}")
             self._update_status("Running vision preprocessing...")
 
             # Clear filter values but don't clear the filter_frames list itself
@@ -1587,5 +1680,7 @@ class ProcessingTab(QWidget):
             self._start_vision_processing(self.current_pdf)
 
             self._update_status("Vision preprocessing started")
+            logger.info("Vision preprocessing started successfully")
         except Exception as e:
+            logger.error(f"Error in manual vision preprocessing: {str(e)}")
             self._handle_error(e, "manual vision preprocessing")

@@ -1,32 +1,32 @@
 from __future__ import annotations
-from typing import Optional, Any
+
 import time
-import logging
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from typing import Any, Optional
+
 from PyQt6.QtCore import (
-    Qt,
-    QPropertyAnimation,
     QEasingCurve,
-    QSize,
-    pyqtProperty,
     QPointF,
+    QPropertyAnimation,
     QRect,
+    QSize,
+    Qt,
+    pyqtProperty,
 )
 from PyQt6.QtGui import (
-    QPainter,
     QColor,
-    QLinearGradient,
-    QPen,
     QFont,
     QFontMetrics,
+    QLinearGradient,
+    QPainter,
+    QPen,
     QRadialGradient,
 )
+from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("LoadingScreen")
+from ..utils.logger import get_logger
+
+# Get logger
+logger = get_logger()
 
 # Performance settings
 ENABLE_PERF_LOGGING = False  # Set to True only for debugging
@@ -92,9 +92,7 @@ class EnhancedLoadingScreen(QWidget):
             phase_start = super_time
 
         # Window properties
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-        )
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         # Set initial opacity higher so background is visible from start
@@ -142,10 +140,10 @@ class EnhancedLoadingScreen(QWidget):
                 f"__init__ - _calculate_dimensions() took {(dim_time - phase_start) * 1000:.2f}ms"
             )
             phase_start = dim_time
-            
+
         # Pre-calculate expensive rendering elements
         self._precalculate_rendering_elements()
-        
+
         if ENABLE_PERF_LOGGING:
             precalc_time = time.time()
             logger.debug(
@@ -299,7 +297,7 @@ class EnhancedLoadingScreen(QWidget):
         """Pre-calculate expensive rendering elements to avoid first-paint delays"""
         # Create center point
         self._center_point = QPointF(self.rect().center())
-        
+
         # Create container rect
         self._container_rect = QRect(
             int(self._center_point.x() - self.container_width / 2),
@@ -307,7 +305,7 @@ class EnhancedLoadingScreen(QWidget):
             self.container_width,
             self.container_height,
         )
-        
+
         # Create shadow rect
         shadow_offset = 10
         self._shadow_rect = QRect(
@@ -316,23 +314,24 @@ class EnhancedLoadingScreen(QWidget):
             self._container_rect.width() + shadow_offset,
             self._container_rect.height() + shadow_offset,
         )
-        
+
         # Pre-create background gradient
         topLeft = QPointF(self._container_rect.topLeft())
         bottomLeft = QPointF(self._container_rect.bottomLeft())
         self._cached_bg_gradient = QLinearGradient(topLeft, bottomLeft)
         self._cached_bg_gradient.setColorAt(0, self.COLOR_BG_LIGHT)
         self._cached_bg_gradient.setColorAt(1, self.COLOR_BG_DARK)
-        
+
         # Pre-create progress gradient
         bar_left = (self.width() - self.progress_bar_width) / 2
         bar_top = self._container_rect.bottom() - self.progress_bar_margin_bottom
         self._cached_progress_gradient = QLinearGradient(
-            QPointF(bar_left, bar_top), QPointF(bar_left + self.progress_bar_width, bar_top)
+            QPointF(bar_left, bar_top),
+            QPointF(bar_left + self.progress_bar_width, bar_top),
         )
         self._cached_progress_gradient.setColorAt(0, self.COLOR_PRIMARY)
         self._cached_progress_gradient.setColorAt(1, self.COLOR_SECONDARY)
-    
+
     def resizeEvent(self, event) -> None:
         """Handle resize event to recalculate cached values."""
         super().resizeEvent(event)
@@ -444,7 +443,7 @@ class EnhancedLoadingScreen(QWidget):
             phase_start = total_start
 
         # Skip pre-calculations - we've already done them in _precalculate_rendering_elements
-        
+
         # Create a faster fade-in with higher start opacity for better perceived performance
         self._create_animation(
             b"splash_opacity",

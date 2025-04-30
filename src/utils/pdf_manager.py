@@ -1,6 +1,9 @@
 from __future__ import annotations
 from typing import Dict, Any, Optional
 import os
+import re
+import gc
+import traceback
 from tempfile import TemporaryDirectory
 import shutil
 from .models import PDFTask
@@ -8,6 +11,7 @@ from .template_manager import TemplateManager
 from datetime import datetime
 from .path_utils import normalize_path, is_same_path
 import time
+from .logger import get_logger
 
 class PDFManager:
     """Manages PDF file operations."""
@@ -61,21 +65,23 @@ class PDFManager:
             if not os.path.exists(source_folder):
                 return None
 
+            logger = get_logger()
+
             # Print active tasks for debugging
             if active_tasks:
-                print(f"[DEBUG] Current active tasks: {len(active_tasks)}")
+                logger.debug(f"Current active tasks: {len(active_tasks)}")
                 for task_id, task in active_tasks.items():
-                    print(
-                        f"[DEBUG] Task {task_id[:8]}... status: {task.status}, file: {os.path.basename(task.pdf_path)}"
+                    logger.debug(
+                        f"Task {task_id[:8]}... status: {task.status}, file: {os.path.basename(task.pdf_path)}"
                     )
             else:
-                print("[DEBUG] No active tasks")
+                logger.debug("No active tasks")
 
             # Get all PDF files in the folder
             all_files = [
                 f for f in os.listdir(source_folder) if f.lower().endswith(".pdf")
             ]
-            print(f"[DEBUG] Found {len(all_files)} total PDF files in source folder")
+            logger.debug(f"Found {len(all_files)} total PDF files in source folder")
 
             # Track how many files we're skipping and why
             skipped_processed = 0
@@ -96,7 +102,7 @@ class PDFManager:
                     is_processed = False
                     for processed_file in self._processed_files:
                         if self._paths_equal(full_path, processed_file):
-                            print(f"[DEBUG] Skipping previously processed file: {file}")
+                            logger.debug(f"Skipping previously processed file: {file}")
                             is_processed = True
                             skipped_processed += 1
                             break
@@ -126,8 +132,8 @@ class PDFManager:
                             is_in_processing = True
 
                     if is_in_processing:
-                        print(
-                            f"[DEBUG] Skipping file that is being processed in tasks: {task_ids_with_path}"
+                        logger.debug(
+                            f"Skipping file that is being processed in tasks: {task_ids_with_path}"
                         )
                         skipped_active += 1
                         continue
@@ -135,20 +141,20 @@ class PDFManager:
                     # Skip files that are already in use by checking if they can be opened
                     try:
                         # Use a quick try-except to test if the file can be opened
-                        with open(full_path, "rb") as f:
+                        with open(full_path, "rb") as _:
                             # Just try to open the file to check if it's accessible
                             pass
                         # If we got here, the file can be opened
                         pdf_files.append(full_path)
                     except PermissionError:
                         # Skip this file as it's locked by another process
-                        print(f"[DEBUG] Skipping locked file: {file}")
+                        logger.debug(f"Skipping locked file: {file}")
                         skipped_locked += 1
                         continue
 
             # Print summary of what we found
-            print(
-                f"[DEBUG] PDF selection summary: {len(pdf_files)} available, {skipped_processed} skipped (processed), {skipped_active} skipped (active tasks), {skipped_locked} skipped (locked)"
+            logger.debug(
+                f"PDF selection summary: {len(pdf_files)} available, {skipped_processed} skipped (processed), {skipped_active} skipped (active tasks), {skipped_locked} skipped (locked)"
             )
 
             if not pdf_files:
@@ -156,18 +162,20 @@ class PDFManager:
 
             # Return the first available file
             selected_file = sorted(pdf_files)[0]
-            print(f"[DEBUG] Selected next PDF file: {selected_file}")
+            logger.info(f"Selected next PDF file: {selected_file}")
             return selected_file
 
         except Exception as e:
-            print(f"[DEBUG] Error getting next PDF: {str(e)}")
+            logger.error(f"Error getting next PDF: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
 
     def close_current_pdf(self) -> None:
         """Clear the currently tracked PDF."""
         # Simply clear the path reference
         if self._current_path:
-            print(f"[DEBUG] Stopped tracking PDF: {self._current_path}")
+            logger = get_logger()
+            logger.debug(f"Stopped tracking PDF: {self._current_path}")
             self._current_path = None
 
     def generate_output_path(self, template: str, data: Dict[str, Any]) -> str:
@@ -180,9 +188,10 @@ class PDFManager:
         Returns:
             str: Generated output path.
         """
+        logger = get_logger()
         try:
-            print(f"[DEBUG] Generating output path with template: '{template}'")
-            print(f"[DEBUG] Template data keys: {sorted(data.keys())}")
+            logger.debug(f"Generating output path with template: '{template}'")
+            logger.debug(f"Template data keys: {sorted(data.keys())}")
 
             # Create a copy of the data to avoid modifying the original
             template_data = data.copy()
@@ -191,8 +200,6 @@ class PDFManager:
             for key in list(template_data.keys()):
                 if isinstance(template_data[key], str):
                     # Remove Excel Row information from the value
-                    import re
-
                     template_data[key] = re.sub(
                         r"\s*⟨Excel Row[:-]\s*\d+⟩", "", template_data[key]
                     )
@@ -204,7 +211,7 @@ class PDFManager:
                     hasattr(template_data[key], "isnull")
                     and template_data[key].isnull()
                 ):
-                    print(f"[DEBUG] Found NaT value for {key}, using fallback")
+                    logger.debug(f"Found NaT value for {key}, using fallback")
                     template_data[key] = "unknown_date"
                     # Also add a fallback datetime
                     template_data[f"{key}_date"] = datetime.now()
@@ -217,31 +224,29 @@ class PDFManager:
                 if key in ["processed_folder", "filter1", "filter2", "filter3"]:
                     value_type = type(template_data[key]).__name__
                     value_str = str(template_data[key])
-                    print(
-                        f"[DEBUG] Template data['{key}']: {value_str} (type: {value_type})"
+                    logger.debug(
+                        f"Template data['{key}']: {value_str} (type: {value_type})"
                     )
 
             # Let the template manager handle the formatting with the improved implementation
             try:
                 # The updated template manager now handles both curly brace and ${} formats
                 result = self.template_manager.format_path(template, template_data)
-                print(f"[DEBUG] Generated path: {result}")
+                logger.debug(f"Generated path: {result}")
 
                 # If we still have unresolved template variables after processing
                 if ("{" in result and "}" in result) or (
                     "${" in result and "}" in result
                 ):
-                    print(
-                        f"[DEBUG] Warning: Output path still has unresolved variables: {result}"
+                    logger.warning(
+                        f"Output path still has unresolved variables: {result}"
                     )
                     # Try basic substitution for any remaining variables
-                    import re
-
                     result = re.sub(r"\{[^}]+\}", "_", result)
                     result = re.sub(r"\$\{[^}]+\}", "_", result)
-                    print(f"[DEBUG] Cleaned path: {result}")
+                    logger.debug(f"Cleaned path: {result}")
             except Exception as e:
-                print(f"[DEBUG] Template manager error: {str(e)}")
+                logger.error(f"Template manager error: {str(e)}")
                 # Fallback path with timestamp
                 result = os.path.join(
                     template_data.get("processed_folder", "processed"),
@@ -253,7 +258,8 @@ class PDFManager:
 
             return result
         except Exception as e:
-            print(f"[DEBUG] Error generating output path: {str(e)}")
+            logger.error(f"Error generating output path: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # Return a fallback path to avoid complete failure
             return os.path.join(
                 data.get("processed_folder", "processed"),
@@ -267,21 +273,20 @@ class PDFManager:
             file_path: Path to the file that has been processed
         """
         if file_path:
+            logger = get_logger()
             normalized_path = self._normalize_path(file_path)
             self._processed_files.add(normalized_path)
-            print(
-                f"[DEBUG] Marked file as processed (internal tracking): {normalized_path}"
+            logger.debug(
+                f"Marked file as processed (internal tracking): {normalized_path}"
             )
 
             # Log the full list for debugging
-            print(
-                f"[DEBUG] Current processed files count: {len(self._processed_files)}"
+            logger.debug(
+                f"Current processed files count: {len(self._processed_files)}"
             )
 
             # Immediately update our memory of processed files
             # This ensures future get_next_pdf calls will respect this newly processed file
-            import gc
-
             gc.collect()
 
     def process_pdf(
@@ -299,12 +304,13 @@ class PDFManager:
             processed_folder: Base folder for processed files.
             output_template: Template string for output path generation.
         """
+        logger = get_logger()
         # Normalize the source path using path_utils
         source_path = normalize_path(task.pdf_path)
-        print(f"[DEBUG] Processing PDF file: {source_path}")
+        logger.info(f"Processing PDF file: {source_path}")
 
         if not os.path.exists(source_path):
-            print(f"[DEBUG] PDF file not found: {source_path}")
+            logger.error(f"PDF file not found: {source_path}")
             raise FileNotFoundError(f"PDF file not found: {source_path}")
 
         # Store original location for potential revert operation
@@ -330,25 +336,25 @@ class PDFManager:
 
                 # Normalize output path using path_utils
                 output_path = normalize_path(output_path)
-                print(f"[DEBUG] Final output path: {output_path}")
+                logger.debug(f"Final output path: {output_path}")
 
                 # Ensure output directory exists
                 try:
                     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                    print(
-                        f"[DEBUG] Created output directory: {os.path.dirname(output_path)}"
+                    logger.debug(
+                        f"Created output directory: {os.path.dirname(output_path)}"
                     )
                 except Exception as e:
-                    print(f"[DEBUG] Error creating output directory: {str(e)}")
+                    logger.error(f"Error creating output directory: {str(e)}")
                     raise ValueError(f"Could not create output directory: {str(e)}")
 
                 # Copy PDF to temporary location
                 temp_pdf = os.path.join(temp_dir, "temp.pdf")
                 try:
                     shutil.copy2(source_path, temp_pdf)
-                    print(f"[DEBUG] Copied PDF to temporary location: {temp_pdf}")
+                    logger.debug(f"Copied PDF to temporary location: {temp_pdf}")
                 except Exception as e:
-                    print(f"[DEBUG] Error copying PDF to temp location: {str(e)}")
+                    logger.error(f"Error copying PDF to temp location: {str(e)}")
                     raise ValueError(
                         f"Could not copy PDF to temporary location: {str(e)}"
                     )
@@ -358,19 +364,19 @@ class PDFManager:
                     try:
                         # Store rotation in task metadata for viewer
                         task.metadata = {"rotation": task.rotation_angle}
-                        print(
-                            f"[DEBUG] Stored rotation of {task.rotation_angle} degrees in metadata"
+                        logger.debug(
+                            f"Stored rotation of {task.rotation_angle} degrees in metadata"
                         )
                     except Exception as e:
-                        print(f"[DEBUG] Error storing rotation metadata: {str(e)}")
+                        logger.warning(f"Error storing rotation metadata: {str(e)}")
                         # Continue even if metadata storage fails
 
                 # Move to final location with versioning
                 try:
                     # Use our versioning method to handle existing files
                     final_path = self.move_pdf_with_versioning(source_path, output_path)
-                    print(
-                        f"[DEBUG] Successfully moved PDF to final location: {final_path}"
+                    logger.info(
+                        f"Successfully moved PDF to final location: {final_path}"
                     )
 
                     # Set the processed location in the task
@@ -380,26 +386,27 @@ class PDFManager:
                     try:
                         # Try to remove with retries
                         if self._remove_file_with_retry(source_path):
-                            print(
-                                "[DEBUG] Successfully removed or renamed the original file."
+                            logger.debug(
+                                "Successfully removed or renamed the original file."
                             )
                         else:
                             # If removal failed, mark the file as processed in our tracking
                             self.mark_file_processed(source_path)
                     except Exception as e:
-                        print(
-                            f"[DEBUG] Warning: Could not remove original PDF: {str(e)}"
+                        logger.warning(
+                            f"Could not remove original PDF: {str(e)}"
                         )
                         # Mark the file as processed even if removal failed
                         self.mark_file_processed(source_path)
 
-                    print("[DEBUG] PDF processing completed successfully")
+                    logger.info("PDF processing completed successfully")
                 except Exception as e:
-                    print(f"[DEBUG] Error moving PDF to final location: {str(e)}")
+                    logger.error(f"Error moving PDF to final location: {str(e)}")
                     raise ValueError(f"Could not move PDF to final location: {str(e)}")
 
             except Exception as e:
-                print(f"[DEBUG] Error processing PDF: {str(e)}")
+                logger.error(f"Error processing PDF: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 raise
 
     def _remove_file_with_retry(
@@ -418,18 +425,18 @@ class PDFManager:
         Raises:
             Exception: If all attempts fail
         """
-        import time
-
+        logger = get_logger()
         for attempt in range(max_attempts):
             try:
                 os.remove(file_path)
-                print(f"[DEBUG] Removed original PDF from source folder: {file_path}")
+                logger.debug(f"Removed original PDF from source folder: {file_path}")
                 return True
             except Exception as e:
-                print(
-                    f"[DEBUG] Removal attempt {attempt + 1} failed: {str(e)}, retrying in {delay}s..."
+                logger.warning(
+                    f"Removal attempt {attempt + 1} failed: {str(e)}, retrying in {delay}s..."
                 )
                 time.sleep(delay)
+        logger.error(f"Failed to remove file after {max_attempts} attempts: {file_path}")
         return False
 
     def revert_pdf_location(self, task: PDFTask) -> bool:
@@ -441,17 +448,18 @@ class PDFManager:
         Returns:
             bool: True if successful, False otherwise.
         """
+        logger = get_logger()
         try:
             if (
                 not task
                 or not task.processed_pdf_location
                 or not task.original_pdf_location
             ):
-                print("[DEBUG] Cannot revert: missing required task information")
+                logger.warning("Cannot revert: missing required task information")
                 return False
 
             if not os.path.exists(task.processed_pdf_location):
-                print(f"[DEBUG] Processed PDF not found: {task.processed_pdf_location}")
+                logger.warning(f"Processed PDF not found: {task.processed_pdf_location}")
                 return False
 
             # Create parent directory if it doesn't exist
@@ -459,14 +467,15 @@ class PDFManager:
 
             # Move the file back to its original location
             shutil.move(task.processed_pdf_location, task.original_pdf_location)
-            print(
-                f"[DEBUG] Reverted PDF from {task.processed_pdf_location} to {task.original_pdf_location}"
+            logger.info(
+                f"Reverted PDF from {task.processed_pdf_location} to {task.original_pdf_location}"
             )
 
             return True
 
         except Exception as e:
-            print(f"[DEBUG] Error reverting PDF: {str(e)}")
+            logger.error(f"Error reverting PDF: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
 
     def move_pdf_with_versioning(self, source_path: str, target_path: str) -> str:
@@ -487,16 +496,15 @@ class PDFManager:
             FileNotFoundError: If the source file doesn't exist
             ValueError: If the file cannot be moved
         """
+        logger = get_logger()
         try:
-            from datetime import datetime
-
             # Normalize paths
             source_path = normalize_path(source_path)
             target_path = normalize_path(target_path)
 
             # Check if source file exists
             if not os.path.exists(source_path):
-                print(f"[DEBUG] Source file not found: {source_path}")
+                logger.error(f"Source file not found: {source_path}")
                 raise FileNotFoundError(f"Source file not found: {source_path}")
 
             # Ensure target directory exists
@@ -504,7 +512,7 @@ class PDFManager:
 
             # Check if target file already exists
             if os.path.exists(target_path):
-                print(f"[DEBUG] Target file already exists: {target_path}")
+                logger.debug(f"Target file already exists: {target_path}")
 
                 # Get directory and filename components
                 target_dir = os.path.dirname(target_path)
@@ -523,19 +531,20 @@ class PDFManager:
                 # Rename the existing file - with timestamp, we don't need to check for existing old versions
                 try:
                     shutil.move(target_path, old_path)
-                    print(f"[DEBUG] Renamed existing file to: {old_path}")
+                    logger.debug(f"Renamed existing file to: {old_path}")
                 except Exception as e:
-                    print(f"[DEBUG] Error renaming existing file: {str(e)}")
+                    logger.warning(f"Error renaming existing file: {str(e)}")
                     # Continue anyway - we'll try to copy the new file
 
             # Copy the new file to the target location
             shutil.copy2(source_path, target_path)
-            print(f"[DEBUG] Successfully copied file to: {target_path}")
+            logger.debug(f"Successfully copied file to: {target_path}")
 
             return target_path
 
         except Exception as e:
-            print(f"[DEBUG] Error in move_pdf_with_versioning: {str(e)}")
+            logger.error(f"Error in move_pdf_with_versioning: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise ValueError(f"Failed to move PDF file: {str(e)}")
 
     def _ensure_file_released(self, file_path: str, max_attempts: int = 3) -> bool:
@@ -554,32 +563,33 @@ class PDFManager:
         if self._paths_equal(file_path, self._current_path):
             self.close_current_pdf()
 
+        logger = get_logger()
         # Try to verify file is accessible
         for attempt in range(max_attempts):
             try:
                 # First try to check if the file exists
                 if not os.path.exists(file_path):
-                    print(f"[DEBUG] File does not exist: {file_path}")
+                    logger.debug(f"File does not exist: {file_path}")
                     return True  # Consider non-existent files as "released"
 
                 # Try to open the file to check if it's accessible
                 with open(file_path, "rb") as _:
-                    print(f"[DEBUG] Verified file is accessible: {file_path}")
+                    logger.debug(f"Verified file is accessible: {file_path}")
                     return True
             except PermissionError:
                 if attempt < max_attempts - 1:
-                    print(f"[DEBUG] File locked, retry {attempt + 1}: {file_path}")
+                    logger.debug(f"File locked, retry {attempt + 1}: {file_path}")
                     time.sleep(0.5)  # Short delay between retries
                     continue
-                print(
-                    f"[DEBUG] File inaccessible after {max_attempts} attempts: {file_path}"
+                logger.warning(
+                    f"File inaccessible after {max_attempts} attempts: {file_path}"
                 )
                 return False
             except FileNotFoundError:
-                print(f"[DEBUG] File does not exist: {file_path}")
+                logger.debug(f"File does not exist: {file_path}")
                 return True  # Consider non-existent files as "released"
             except Exception as e:
-                print(f"[DEBUG] Error checking file: {str(e)}")
+                logger.error(f"Error checking file: {str(e)}")
                 if attempt < max_attempts - 1:
                     time.sleep(0.5)
                     continue
@@ -601,18 +611,19 @@ class PDFManager:
             None if the operation failed due to invalid input, file locks,
             or errors during copy/delete after retries.
         """
+        logger = get_logger()
         # --- 1. Input Validation ---
         if not source_path or not os.path.isfile(source_path):
-            print(f"[DEBUG] Invalid or missing source file: {source_path}")
+            logger.warning(f"Invalid or missing source file: {source_path}")
             return None
         if not skip_folder:
-            print("[DEBUG] Missing skip folder path.")
+            logger.warning("Missing skip folder path.")
             return None
 
         # --- 2. Ensure File is Released ---
         # Attempts to ensure the file is not locked before proceeding.
         if not self._ensure_file_released(source_path, max_attempts=5):
-            print(f"[DEBUG] File appears locked after checks, cannot move: {source_path}")
+            logger.warning(f"File appears locked after checks, cannot move: {source_path}")
             return None # Cannot proceed if file is locked
 
         # --- 3. Prepare Target Path ---
@@ -629,7 +640,8 @@ class PDFManager:
 
         except Exception as path_e:
             # Handle potential errors during path creation (e.g., permissions).
-            print(f"[DEBUG] Error preparing target path or directory: {str(path_e)}")
+            logger.error(f"Error preparing target path or directory: {str(path_e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
 
         # --- 4. Attempt Copy and Delete with Retries ---
@@ -638,42 +650,42 @@ class PDFManager:
             copied = False
             try:
                 # --- 4a. Copy File ---
-                print(f"[DEBUG] Attempt {attempt + 1}/{max_attempts}: Copying '{source_path}' to '{target_path}'")
+                logger.debug(f"Attempt {attempt + 1}/{max_attempts}: Copying '{source_path}' to '{target_path}'")
                 shutil.copy2(source_path, target_path) # copy2 preserves metadata
                 copied = True
-                print("[DEBUG] Copy successful.")
+                logger.debug("Copy successful.")
 
                 # --- 4b. Delete Original File ---
-                print(f"[DEBUG] Attempt {attempt + 1}/{max_attempts}: Removing original file '{source_path}'")
+                logger.debug(f"Attempt {attempt + 1}/{max_attempts}: Removing original file '{source_path}'")
                 os.remove(source_path)
-                print("[DEBUG] Original file removed successfully.")
+                logger.debug("Original file removed successfully.")
 
                 # --- Success Case ---
                 # If both copy and delete succeed, mark the *new* file as processed and return its path.
                 self.mark_file_processed(target_path)
-                print(f"[INFO] Successfully moved skipped PDF to: {target_path}")
+                logger.info(f"Successfully moved skipped PDF to: {target_path}")
                 return target_path # Operation complete
 
             except Exception as e:
-                print(f"[DEBUG] Attempt {attempt + 1}/{max_attempts} failed: {str(e)}")
+                logger.warning(f"Attempt {attempt + 1}/{max_attempts} failed: {str(e)}")
 
                 # --- Cleanup on Failure ---
                 # If copy succeeded but delete failed, try to remove the copied file to avoid duplicates.
                 if copied and os.path.exists(target_path):
                     try:
-                        print(f"[DEBUG] Deletion of original failed, cleaning up copied file: {target_path}")
+                        logger.debug(f"Deletion of original failed, cleaning up copied file: {target_path}")
                         os.remove(target_path)
-                        print("[DEBUG] Cleanup successful.")
+                        logger.debug("Cleanup successful.")
                     except Exception as cleanup_e:
                         # Log if cleanup fails, but proceed to retry/fail the main operation.
-                        print(f"[WARNING] Failed to clean up copied file '{target_path}' after error: {str(cleanup_e)}")
+                        logger.warning(f"Failed to clean up copied file '{target_path}' after error: {str(cleanup_e)}")
 
                 # --- Retry Logic ---
                 if attempt < max_attempts - 1:
-                    print("[DEBUG] Retrying in 0.5 seconds...")
+                    logger.debug("Retrying in 0.5 seconds...")
                     time.sleep(0.5)
                     # Loop continues to the next attempt
                 else:
                     # All attempts failed.
-                    print(f"[ERROR] Failed to move file '{source_path}' after {max_attempts} attempts.")
+                    logger.error(f"Failed to move file '{source_path}' after {max_attempts} attempts.")
                     return None # Exit after last attempt

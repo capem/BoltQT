@@ -3,6 +3,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 import time
 import pandas as pd
+import traceback
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -10,6 +11,7 @@ from .models import PDFTask
 from .config_manager import ConfigManager
 from .excel_manager import ExcelManager
 from .pdf_manager import PDFManager
+from .logger import get_logger
 
 
 class ProcessingThread(QThread):
@@ -45,6 +47,9 @@ class ProcessingThread(QThread):
 
     def run(self) -> None:
         """Process tasks in the queue."""
+        logger = get_logger()
+        logger.info("Starting PDF processing thread")
+
         while self.running:
             # Find next pending task
             task_to_process, task_id = self._get_next_pending_task()
@@ -54,13 +59,15 @@ class ProcessingThread(QThread):
                 continue
 
             try:
-                print(f"[DEBUG] Processing task {task_id}: {task_to_process.pdf_path}")
+                logger.info(f"Processing task {task_id}: {task_to_process.pdf_path}")
 
                 # Phase 1: Setup and validation
+                logger.debug("Phase 1: Setup and validation")
                 config = self.config_manager.get_config()
                 self._validate_config(config)
 
                 # Phase 2: Load Excel data and find matching row
+                logger.debug("Phase 2: Loading Excel data and finding matching row")
                 self._ensure_excel_data_loaded(config)
                 df = self._excel_data_cache["data"]
 
@@ -75,14 +82,16 @@ class ProcessingThread(QThread):
                 task_to_process.row_idx = row_idx
 
                 # Phase 3: Validate row data
+                logger.debug("Phase 3: Validating row data")
                 if row_idx >= len(df):
                     # Reload Excel data if row index is out of bounds
+                    logger.warning(f"Row index {row_idx} out of bounds, reloading Excel data")
                     self.excel_manager.load_excel_data(config["excel_file"], config["excel_sheet"], force_reload=True)
                     self._excel_data_cache["data"] = self.excel_manager.excel_data
-                    print("[DEBUG] Reloaded Excel data")
                     df = self._excel_data_cache["data"]
 
                     if row_idx >= len(df):
+                        logger.error(f"Row index {row_idx} still out of bounds after reload (df length: {len(df)})")
                         raise Exception(
                             f"Row index {row_idx} is still out of bounds after reloading Excel data (df length: {len(df)})"
                         )
@@ -90,12 +99,14 @@ class ProcessingThread(QThread):
                 row_data = df.iloc[row_idx]
 
                 # Phase 4: Create template data
+                logger.debug("Phase 4: Creating template data")
                 template_data = self._create_template_data(
                     row_data, filter_columns, filter_values, row_idx
                 )
                 template_data["processed_folder"] = config["processed_folder"]
 
                 # Phase 5: Process PDF
+                logger.debug("Phase 5: Processing PDF")
                 processed_path = self.pdf_manager.generate_output_path(
                     config["output_template"], template_data
                 )
@@ -105,6 +116,7 @@ class ProcessingThread(QThread):
                     filter_column = (
                         filter_columns[1] if len(filter_columns) > 1 else None
                     )
+                    logger.debug(f"Updating Excel hyperlink for row {row_idx}")
                     original_link = self.excel_manager.update_pdf_link(
                         config["excel_file"],
                         config["excel_sheet"],
@@ -119,11 +131,12 @@ class ProcessingThread(QThread):
                     task_to_process.original_pdf_location = task_to_process.pdf_path
                     task_to_process.processed_pdf_location = processed_path
 
-                    print(f"[DEBUG] Updated Excel hyperlink, original: {original_link}")
+                    logger.info(f"Updated Excel hyperlink, original: {original_link}")
                 except Exception as e:
-                    print(f"[DEBUG] Warning - Excel hyperlink update failed: {str(e)}")
+                    logger.warning(f"Excel hyperlink update failed: {str(e)}")
 
                 # Process the PDF
+                logger.debug(f"Moving PDF to processed folder: {config['processed_folder']}")
                 self.pdf_manager.process_pdf(
                     task=task_to_process,
                     template_data=template_data,
@@ -135,11 +148,14 @@ class ProcessingThread(QThread):
                 task_to_process.status = "completed"
                 task_to_process.end_time = datetime.now()
                 self.task_completed.emit(task_id, "completed")
-                print(f"[DEBUG] Task {task_id} completed successfully")
+                logger.info(f"Task {task_id} completed successfully")
 
             except Exception as e:
                 error_msg = str(e)
-                print(f"[DEBUG] Task processing error: {error_msg}")
+                logger.error(f"Task processing error: {error_msg}")
+
+                # Log traceback for debugging
+                logger.error(f"Traceback: {traceback.format_exc()}")
 
                 # Update task status and emit failure signal
                 if task_id in self.tasks:
@@ -148,7 +164,7 @@ class ProcessingThread(QThread):
                     self.tasks[task_id].end_time = datetime.now()
 
                 self.task_failed.emit(task_id, error_msg)
-                print(f"[DEBUG] Task {task_id} failed: {error_msg}")
+                logger.error(f"Task {task_id} failed: {error_msg}")
 
             finally:
                 # Small delay to prevent CPU overuse
@@ -219,10 +235,12 @@ class ProcessingThread(QThread):
         self, filter_columns: List[str], filter_values: List[str]
     ) -> int:
         """Create a new Excel row with the given filter values."""
+        logger = get_logger()
         config = self.config_manager.get_config()
 
         # Create a new row using the excel manager
-        new_row_data, new_row_idx = self.excel_manager.add_new_row(
+        logger.debug(f"Adding new row to Excel with filter values: {filter_values}")
+        _, new_row_idx = self.excel_manager.add_new_row(
             config["excel_file"],
             config["excel_sheet"],
             filter_columns,
@@ -232,9 +250,8 @@ class ProcessingThread(QThread):
         # Update the cached DataFrame
         self._excel_data_cache["data"] = self.excel_manager.excel_data
 
-        print(
-            f"[DEBUG] Added new row {new_row_idx} for filter2 value '{filter_values[1]}'"
-        )
+        filter2_value = filter_values[1] if len(filter_values) > 1 else "N/A"
+        logger.info(f"Added new row {new_row_idx} (Excel row {new_row_idx + 2}) for filter2 value '{filter2_value}'")
         return new_row_idx
 
     def _find_matching_row(
@@ -245,15 +262,15 @@ class ProcessingThread(QThread):
         task: Optional[PDFTask] = None,
     ) -> int:
         """Find or create a matching row in Excel data."""
+        logger = get_logger()
+
         # Trust task.row_idx if valid bounds
         if task and task.row_idx >= 0 and task.row_idx < len(df):
-            print(
-                f"[DEBUG] Using task row_idx {task.row_idx} (Excel row {task.row_idx + 2})"
-            )
+            logger.debug(f"Using task row_idx {task.row_idx} (Excel row {task.row_idx + 2})")
             return task.row_idx
         else:
             # Create new row with clean filter2 value
-            print("[DEBUG] Creating new row for")
+            logger.debug(f"Creating new row for filter values: {filter_values}")
             return self._create_new_row(filter_columns, filter_values)
 
     def _create_template_data(
@@ -291,7 +308,7 @@ class ProcessingThread(QThread):
                     try:
                         date_obj = datetime.strptime(value, fmt)
                         template_data[f"filter{i}_date"] = date_obj
-                        print(f"[DEBUG] Converted filter{i} to datetime: {date_obj}")
+                        get_logger().debug(f"Converted filter{i} to datetime: {date_obj}")
                         break
                     except ValueError:
                         continue
@@ -308,22 +325,25 @@ class ProcessingThread(QThread):
                         try:
                             date_obj = datetime.strptime(value, fmt)
                             template_data[f"{column}_date"] = date_obj
-                            print(f"[DEBUG] Converted {column} to datetime: {date_obj}")
+                            get_logger().debug(f"Converted {column} to datetime: {date_obj}")
                             break
                         except ValueError:
                             continue
                 elif isinstance(value, pd.Timestamp):
                     # Convert pandas Timestamp to Python datetime
                     template_data[f"{column}_date"] = value.to_pydatetime()
-                    print(f"[DEBUG] Converted pandas Timestamp {column} to datetime")
+                    get_logger().debug(f"Converted pandas Timestamp {column} to datetime")
 
         # Add the current date and time
         template_data["current_date"] = datetime.now()
 
-        print(f"[DEBUG] Created template data with {len(template_data)} keys")
+        get_logger().debug(f"Created template data with {len(template_data)} keys")
         return template_data
 
     def stop(self) -> None:
         """Stop the processing thread."""
+        logger = get_logger()
+        logger.info("Stopping PDF processing thread")
         self.running = False
         self.wait()
+        logger.debug("PDF processing thread stopped")
