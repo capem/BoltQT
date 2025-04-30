@@ -1,6 +1,6 @@
-from PyQt6.QtWidgets import QTabWidget, QTabBar, QStylePainter, QStyleOptionTab, QStyle
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QStyle, QStyleOptionTab, QStylePainter, QTabBar, QTabWidget
 
 
 class MacTabBar(QTabBar):

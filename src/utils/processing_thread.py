@@ -1,17 +1,18 @@
 from __future__ import annotations
-from typing import Optional, Dict, Any, List
-from datetime import datetime
-import time
-import pandas as pd
-import traceback
 
+import time
+import traceback
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from .models import PDFTask
 from .config_manager import ConfigManager
 from .excel_manager import ExcelManager
-from .pdf_manager import PDFManager
 from .logger import get_logger
+from .models import PDFTask
+from .pdf_manager import PDFManager
 
 
 class ProcessingThread(QThread):

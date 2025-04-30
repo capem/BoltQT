@@ -1,24 +1,27 @@
 from __future__ import annotations
-from typing import Callable, List
-from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QGridLayout,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QFileDialog,
-    QComboBox,
-    QScrollArea,
-    QFrame,
-    QMessageBox,
-    QCheckBox,
-    QPlainTextEdit,
-)
-from PyQt6.QtCore import Qt
+
 import os
 import traceback
+from typing import Callable, List
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
 from ..utils import ConfigManager
 from ..utils.excel_manager import ExcelManager
 from ..utils.logger import get_logger

@@ -5,11 +5,11 @@ This module provides a unified logging interface for the entire application,
 with support for console and file logging, log rotation, and configurable log levels.
 """
 
+import logging
 import os
 import sys
-import logging
-from logging.handlers import RotatingFileHandler
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
@@ -141,54 +141,6 @@ def update_log_levels(console_level: Optional[int] = None, file_level: Optional[
             if file_level is not None:
                 handler.setLevel(file_level)
                 _logger.info(f"File logging level updated to: {logging.getLevelName(file_level)}")
-
-
-def get_log_file_path() -> Optional[str]:
-    """
-    Get the current log file path.
-    
-    Returns:
-        The path to the current log file, or None if file logging is disabled
-    """
-    if _logger is None:
-        return None
-    
-    for handler in _logger.handlers:
-        if isinstance(handler, logging.FileHandler):
-            return handler.baseFilename
-    
-    return None
-
-
-# Convenience functions for logging
-def debug(msg: str, *args, **kwargs) -> None:
-    """Log a debug message."""
-    get_logger().debug(msg, *args, **kwargs)
-
-
-def info(msg: str, *args, **kwargs) -> None:
-    """Log an info message."""
-    get_logger().info(msg, *args, **kwargs)
-
-
-def warning(msg: str, *args, **kwargs) -> None:
-    """Log a warning message."""
-    get_logger().warning(msg, *args, **kwargs)
-
-
-def error(msg: str, *args, **kwargs) -> None:
-    """Log an error message."""
-    get_logger().error(msg, *args, **kwargs)
-
-
-def critical(msg: str, *args, **kwargs) -> None:
-    """Log a critical message."""
-    get_logger().critical(msg, *args, **kwargs)
-
-
-def exception(msg: str, *args, exc_info=True, **kwargs) -> None:
-    """Log an exception with traceback."""
-    get_logger().exception(msg, *args, exc_info=exc_info, **kwargs)
 
 
 # Initialize logger on module import

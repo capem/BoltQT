@@ -1,16 +1,18 @@
 from __future__ import annotations
+
+from typing import Optional
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QPixmap
 from PyQt6.QtWidgets import (
-    QWidget,
     QDialog,
-    QVBoxLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QTextBrowser,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QPixmap
-from typing import Optional
 
 from ..utils.logger import get_logger
 

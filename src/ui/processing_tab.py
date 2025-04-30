@@ -546,7 +546,7 @@ class ProcessingTab(QWidget):
                     logger.error(f"Excel file access error: {str(e)}")
                     self._show_warning(
                         f"Could not access Excel file: {config['excel_file']}\n"
-                        f"Error: {str(e)}\n\n"
+                        f"Error: {str(e)}\n"
                         f"Filters will not be populated."
                     )
                     # Set empty values for all filters
@@ -560,7 +560,7 @@ class ProcessingTab(QWidget):
                     logger.error(f"Traceback: {traceback.format_exc()}")
                     self._show_warning(
                         f"Error loading Excel data from {config['excel_file']}:\n"
-                        f"{str(e)}\n\n"
+                        f"{str(e)}\n"
                         f"Filters will not be populated."
                     )
                     # Set empty values for all filters

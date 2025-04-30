@@ -1,4 +1,4 @@
-from PyQt6.QtGui import QFont, QPalette, QColor
+from PyQt6.QtGui import QColor, QFont, QPalette
 
 
 def apply_mac_style(app):

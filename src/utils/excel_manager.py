@@ -1,15 +1,18 @@
 from __future__ import annotations
-from typing import Dict, Optional, Tuple, List, Any, Callable
-import pandas as pd
+
+import traceback
 from datetime import datetime
+from os import path, remove
+from shutil import copy2
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.worksheet.hyperlink import Hyperlink
 from PyQt6.QtCore import QObject, QReadWriteLock
-from shutil import copy2
-from os import path, remove
-import traceback
-from .path_utils import normalize_path, make_relative_path, split_drive_or_unc
+
 from .logger import get_logger
+from .path_utils import make_relative_path, normalize_path, split_drive_or_unc
 
 
 class ExcelManager(QObject):

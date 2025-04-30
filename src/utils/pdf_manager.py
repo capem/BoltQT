@@ -1,17 +1,20 @@
 from __future__ import annotations
-from typing import Dict, Any, Optional
+
+import gc
 import os
 import re
-import gc
-import traceback
-from tempfile import TemporaryDirectory
 import shutil
-from .models import PDFTask
-from .template_manager import TemplateManager
-from datetime import datetime
-from .path_utils import normalize_path, is_same_path
 import time
+import traceback
+from datetime import datetime
+from tempfile import TemporaryDirectory
+from typing import Any, Dict, Optional
+
 from .logger import get_logger
+from .models import PDFTask
+from .path_utils import is_same_path, normalize_path
+from .template_manager import TemplateManager
+
 
 class PDFManager:
     """Manages PDF file operations."""

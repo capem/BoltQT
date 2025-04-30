@@ -1,25 +1,27 @@
 from __future__ import annotations
-from typing import Dict, List, Any, Optional
+
+import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QTableView,
-    QPushButton,
+    QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
-    QMenu,
-    QDialog,
-    QTextEdit,
-    QDialogButtonBox,
-    QMessageBox,
-    QProgressBar,
     QLabel,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QTableView,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
-from PyQt6.QtGui import QColor
-from datetime import datetime
+
 from ..utils.models import PDFTask
-import os
 
 
 class QueueTableModel(QAbstractTableModel):

@@ -1,6 +1,7 @@
-from PyQt6.QtCore import QObject, QEvent, QTimer
-from PyQt6.QtWidgets import QApplication, QToolBar
+from PyQt6.QtCore import QEvent, QObject, QTimer
 from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtWidgets import QApplication, QToolBar
+
 from .logger import get_logger
 
 
