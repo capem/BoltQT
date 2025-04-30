@@ -96,7 +96,7 @@ def make_relative_path(base_path: str, target_path: str) -> str:
 
 
 def split_drive_or_unc(path: str) -> Tuple[str, str]:
-    """Split path into drive/UNC server+share and the rest.
+    r"""Split path into drive/UNC server+share and the rest.
 
     This handles both drive letters (C:) and UNC paths (\\server\share).
 
