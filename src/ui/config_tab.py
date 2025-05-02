@@ -733,12 +733,16 @@ class ConfigTab(QWidget):
 
     def _save_config(self) -> None:
         """Save configuration values to the currently selected preset."""
+        logger = get_logger()
+        logger.debug("Saving configuration from UI to current preset")
+
         try:
             current_preset = self.config_manager.get_current_preset_name()
-            
+            logger.debug(f"Current preset: {current_preset}")
             # Check if a preset is currently selected
             if not current_preset:
                 # No preset selected, ask user to select or create one
+                logger.warning("No active preset selected")
                 QMessageBox.warning(
                     self,
                     "No Active Preset",
@@ -757,13 +761,17 @@ class ConfigTab(QWidget):
                 "output_template": self.output_template_entry.text(),
                 "document_type": self.document_type_entry.text(),  # Document type from UI
             }
+            logger.debug(f"Collected basic config values: {config}")
 
             # Add filter columns
             for i, combo in enumerate(self.filter_combos, 1):
-                config[f"filter{i}_column"] = combo.currentText()
+                filter_value = combo.currentText()
+                config[f"filter{i}_column"] = filter_value
+                logger.debug(f"Filter {i} column: {filter_value}")
 
             # Get prompt text
             config["prompt"] = self.vision_prompt_text.toPlainText()
+            logger.debug(f"Prompt length: {len(config['prompt'])} characters")
 
             # Get field mappings
             field_mappings = {}
@@ -771,12 +779,16 @@ class ConfigTab(QWidget):
                 field_name = entry.text().strip()
                 if field_name:
                     field_mappings[field_name] = f"filter{i + 1}"
+                    logger.debug(f"Field mapping: {field_name} -> filter{i + 1}")
 
             # Add field mappings
             config["field_mappings"] = field_mappings
 
-            # Add vision settings
-            vision_config = self.config_manager.get_config().get("vision", {})
+            # Get current vision config to preserve any settings not in the UI
+            current_vision_config = self.config_manager.get_config().get("vision", {})
+
+            # Create a new vision config with UI values
+            vision_config = current_vision_config.copy()
             vision_config.update(
                 {
                     "enabled": self.vision_enabled_checkbox.isChecked(),
@@ -784,17 +796,24 @@ class ConfigTab(QWidget):
                     "model": self.vision_model_combo.currentText(),
                 }
             )
+            logger.debug(f"Vision config keys: {list(vision_config.keys())}")
 
             # Update with vision config
             config["vision"] = vision_config
+
+            # Log the complete config we're about to save
+            logger.debug(f"Saving config with keys: {list(config.keys())}")
 
             # Update the configuration
             self.config_manager.update_config(config)
 
             # Show status message
             self._update_status(f"Saved changes to preset: {current_preset}")
+            logger.info(f"Successfully saved changes to preset: {current_preset}")
 
         except Exception as e:
+            logger.error(f"Error saving preset: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             self._handle_error(e, "saving preset")
 
     def _show_warning(self, message: str) -> None:

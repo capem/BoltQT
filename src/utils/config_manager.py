@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import traceback
@@ -134,9 +135,24 @@ class ConfigManager(QObject):
         """Save configs to file."""
         logger = get_logger()
         try:
+            # Log what we're about to save
+            preset_names = [name for name in configs.keys() if name != "_last_used_preset"]
+            logger.debug(f"Saving configuration with {len(preset_names)} presets: {preset_names}")
+            logger.debug(f"Current active preset: {configs.get('_last_used_preset', 'None')}")
+
+            # Make sure we're saving a copy, not a reference
+            configs_to_save = copy.deepcopy(configs)
+
             with open(self._config_file, "w", encoding="utf-8") as f:
-                json.dump(configs, f, indent=2)
+                json.dump(configs_to_save, f, indent=2)
             logger.debug(f"Saved configuration to {self._config_file}")
+
+            # Verify the file was written correctly
+            if os.path.exists(self._config_file):
+                file_size = os.path.getsize(self._config_file)
+                logger.debug(f"Config file size after save: {file_size} bytes")
+                if file_size == 0:
+                    logger.error("Config file is empty after save!")
         except Exception as e:
             logger.error(f"Error saving configs: {str(e)}")
             if hasattr(e, "__traceback__"):
@@ -148,7 +164,11 @@ class ConfigManager(QObject):
 
     def update_config(self, new_config: Dict[str, Any]) -> None:
         """Update configuration with new values."""
+        logger = get_logger()
+        logger.debug(f"Updating config with new values. Current preset: {self._current_preset}")
+
         changed = False
+        changed_keys = []
 
         # Update current config
         for key, value in new_config.items():
@@ -160,36 +180,61 @@ class ConfigManager(QObject):
                     if json.dumps(
                         self._current_config[key], sort_keys=True
                     ) != json.dumps(value, sort_keys=True):
-                        self._current_config[key] = value
+                        logger.debug(f"Updating nested dict key: {key}")
+                        self._current_config[key] = value.copy()  # Use copy to avoid reference issues
                         changed = True
+                        changed_keys.append(key)
                 elif self._current_config[key] != value:
+                    logger.debug(f"Updating key: {key}, old value: {self._current_config[key]}, new value: {value}")
                     self._current_config[key] = value
                     changed = True
+                    changed_keys.append(key)
+            else:
+                # Add keys that aren't in the template but are in the update
+                logger.debug(f"Adding new key not in template: {key}")
+                self._current_config[key] = value
+                changed = True
+                changed_keys.append(key)
 
         if changed:
+            logger.info(f"Config changed. Modified keys: {changed_keys}")
             # Load existing configs
             try:
                 if os.path.exists(self._config_file):
                     with open(self._config_file, "r", encoding="utf-8") as f:
                         configs = json.load(f)
+                    logger.debug(f"Loaded existing configs from {self._config_file}")
                 else:
                     configs = {}
+                    logger.debug(f"Config file {self._config_file} does not exist, creating new configs")
 
                 # Update the current named preset if one is active
                 if self._current_preset and self._current_preset in configs:
-                    configs[self._current_preset] = self._current_config
+                    logger.debug(f"Updating preset '{self._current_preset}' with new config values")
+                    # Make a deep copy to avoid reference issues
+                    configs[self._current_preset] = copy.deepcopy(self._current_config)
 
                     # Make sure _last_used_preset is set
                     configs["_last_used_preset"] = self._current_preset
+
+                    # Log the keys being saved
+                    logger.debug(f"Keys in preset being saved: {list(configs[self._current_preset].keys())}")
                 else:
                     # We're modifying an unsaved configuration,
                     # but don't overwrite any presets in the file
-                    pass
+                    logger.warning(f"No active preset or preset '{self._current_preset}' not found in configs. Current preset: '{self._current_preset}'")
+
+                    # If we have a current preset name but it's not in configs, add it
+                    if self._current_preset:
+                        logger.info(f"Adding missing preset '{self._current_preset}' to configs")
+                        configs[self._current_preset] = copy.deepcopy(self._current_config)
+                        configs["_last_used_preset"] = self._current_preset
 
                 # Save configs
                 self._save_configs(configs)
 
                 # Emit signal
+                logger.debug("Emitting config_changed signal")
                 self.config_changed.emit()
 
                 # Call callbacks
@@ -207,6 +252,8 @@ class ConfigManager(QObject):
                 logger.error(f"Error updating configs: {str(e)}")
                 if hasattr(e, "__traceback__"):
                     logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
+        else:
+            logger.info("No changes detected in configuration update")
 
     def load_preset(self, preset_name: str) -> None:
         """Load a preset as the current configuration."""
@@ -256,31 +303,51 @@ class ConfigManager(QObject):
 
     def save_preset(self, preset_name: str) -> None:
         """Save current configuration as a named preset."""
+        logger = get_logger()
+
         if not preset_name or preset_name == "_last_used_preset":
+            logger.warning(f"Invalid preset name: {preset_name}")
             return
 
         try:
+            logger.debug(f"Saving current configuration as preset: {preset_name}")
+
             # Load existing configs
             if os.path.exists(self._config_file):
                 with open(self._config_file, "r", encoding="utf-8") as f:
                     configs = json.load(f)
+                logger.debug(f"Loaded existing configs from {self._config_file}")
             else:
                 configs = {}
+                logger.debug("No existing config file, creating new configs")
+
+            # Make a deep copy of the current config to avoid reference issues
+            config_to_save = copy.deepcopy(self._current_config)
 
             # Add current config as new preset
-            configs[preset_name] = self._current_config
+            configs[preset_name] = config_to_save
             self._current_preset = preset_name
 
             # Update the _last_used_preset
             configs["_last_used_preset"] = preset_name
 
+            # Log what we're about to save
+            logger.debug(f"Current config keys: {list(config_to_save.keys())}")
+
             # Save configs
             self._save_configs(configs)
 
-            logger = get_logger()
+            # Verify the preset was saved correctly
+            if os.path.exists(self._config_file):
+                with open(self._config_file, "r", encoding="utf-8") as f:
+                    saved_configs = json.load(f)
+                if preset_name in saved_configs:
+                    logger.debug(f"Verified preset {preset_name} was saved correctly")
+                else:
+                    logger.error(f"Preset {preset_name} not found in saved config file!")
+
             logger.info(f"Saved preset: {preset_name}")
         except Exception as e:
-            logger = get_logger()
             logger.error(f"Error saving preset: {str(e)}")
             if hasattr(e, "__traceback__"):
                 logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
