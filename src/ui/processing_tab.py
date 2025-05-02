@@ -526,13 +526,13 @@ class ProcessingTab(QWidget):
             if not (config["excel_file"] and config["excel_sheet"]):
                 return
 
-            # If in vision mode, don't reload filter values to avoid clearing vision-populated fields
+            # In vision mode, we still need to load filter values for fuzzy search functionality
+            # The FuzzySearchFrame.set_values method will preserve the current value
+            logger = get_logger()
             if self._vision_mode and filter_index > 0:
-                logger = get_logger()
                 logger.debug(
-                    f"Skipping filter values reload for filter {filter_index + 1} in vision mode"
+                    f"Loading filter values for filter {filter_index + 1} in vision mode (for fuzzy search)"
                 )
-                return
 
             # Load Excel data if needed
             if self.excel_manager.excel_data is None:
@@ -1348,6 +1348,13 @@ class ProcessingTab(QWidget):
 
             # Update process button state
             self._update_process_button()
+
+            # Now load filter values for all filters to ensure proper filtering
+            # This will populate the dropdown lists with the correct filtered values
+            # based on the current filter selections from vision
+            logger.debug("Loading filter values for all filters after vision auto-population")
+            for i in range(len(self.filter_frames)):
+                self._load_filter_values(i)
 
             logger.info("Successfully applied vision preprocessing results to filters")
 
