@@ -261,27 +261,34 @@ class TemplateManager:
         Returns:
             The processed template with all fields replaced with their processed values
         """
+        logger = get_logger()
+        logger.debug(f"Processing template: '{template}'")
 
         def replace_field(match) -> str:
             field_content = match.group(1)
             field_name, operations = self._parse_field(field_content)
 
+            logger.debug(f"Processing field: '{field_content}', name: '{field_name}', operations: {operations}")
+
             if field_name not in data:
-                logger = get_logger()
                 logger.warning(f"Field not found in data: {field_name}")
                 return "_"
 
             value = data[field_name]
+            logger.debug(f"Field '{field_name}' value: '{value}' (type: {type(value).__name__})")
 
             # Apply sanitization to string values except for processed_folder
             if field_name != "processed_folder" and isinstance(value, str):
-                value = self.string_operations["sanitize"](value)
+                sanitized = self.string_operations["sanitize"](value)
+                logger.debug(f"Sanitized '{field_name}' from '{value}' to '{sanitized}'")
+                value = sanitized
 
             # Apply operations
             try:
-                return self._apply_operations(value, operations)
+                result = self._apply_operations(value, operations)
+                logger.debug(f"After operations, field '{field_name}' value: '{result}'")
+                return result
             except Exception as e:
-                logger = get_logger()
                 logger.error(f"Error processing field {field_content}: {str(e)}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 return "_"
@@ -292,9 +299,9 @@ class TemplateManager:
         # Replace all template variables
         try:
             result = re.sub(pattern, replace_field, template)
+            logger.debug(f"Template processing result: '{result}'")
             return result
         except Exception as e:
-            logger = get_logger()
             logger.error(f"Error in template processing: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             # Return a basic fallback with the current date
@@ -311,10 +318,13 @@ class TemplateManager:
             Formatted path string with safe path components.
         """
         try:
-            # First check if the template uses the original curly brace format
-            if "{" in template and "|" in template:
-                # Use the original template processing logic for curly brace format
+            logger = get_logger()
+            # Check if the template uses curly braces format
+            if "{" in template and "}" in template:
+                # Use the process_template method for all curly brace formats
+                # This handles both {name} and {name|operation} formats
                 path = self.process_template(template, data)
+                logger.debug(f"Used process_template for curly brace format: {path}")
             else:
                 # Handle the ${name} format (string.Template)
                 # Convert all values to safe path components while preserving drive letters
@@ -325,6 +335,7 @@ class TemplateManager:
                 # Format the template
                 template_obj = Template(template)
                 path = template_obj.safe_substitute(safe_data)
+                logger.debug(f"Used string.Template for ${{name}} format: {path}")
 
                 # Remove any remaining template variables (in case of missing data)
                 while "${" in path and "}" in path:

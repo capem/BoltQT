@@ -233,6 +233,10 @@ class PDFManager:
 
             # Let the template manager handle the formatting with the improved implementation
             try:
+                # Log the template and data before processing
+                logger.debug(f"Calling template_manager.format_path with template: '{template}'")
+                logger.debug(f"Template data contains {len(template_data)} keys")
+
                 # The updated template manager now handles both curly brace and ${} formats
                 result = self.template_manager.format_path(template, template_data)
                 logger.debug(f"Generated path: {result}")
@@ -245,11 +249,13 @@ class PDFManager:
                         f"Output path still has unresolved variables: {result}"
                     )
                     # Try basic substitution for any remaining variables
+                    original_result = result
                     result = re.sub(r"\{[^}]+\}", "_", result)
                     result = re.sub(r"\$\{[^}]+\}", "_", result)
-                    logger.debug(f"Cleaned path: {result}")
+                    logger.debug(f"Cleaned path from '{original_result}' to '{result}'")
             except Exception as e:
                 logger.error(f"Template manager error: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 # Fallback path with timestamp
                 result = os.path.join(
                     template_data.get("processed_folder", "processed"),
