@@ -23,6 +23,7 @@ class PDFTask:
     processed_pdf_location: Optional[str] = (
         None  # Path where the PDF was moved after processing
     )
+    versioned_pdf_path: Optional[str] = None  # Path of the 'old_' versioned file if one was created
     rotation_angle: int = 0
     skip_type: str = "in_place"  # 'in_place' (default) or 'to_folder'
 
