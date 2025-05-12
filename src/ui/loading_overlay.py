@@ -66,6 +66,8 @@ class LoadingOverlay(QWidget):
         """Starts the animation timer when the widget is shown."""
         # Make the widget block mouse events when visible
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        if self.parentWidget(): # Ensure parent exists
+            self.setGeometry(self.parentWidget().rect()) # Set geometry when shown
         self.raise_() # Ensure it's on top of siblings
         self._timer.start()
         super().showEvent(event)
