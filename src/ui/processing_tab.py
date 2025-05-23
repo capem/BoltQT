@@ -1281,67 +1281,88 @@ class ProcessingTab(QWidget):
                 f"Using normalized data for filter population: {json.dumps(normalized_data, indent=2)}"
             )
 
-            # Apply each filter value from normalized data
-            for filter_key, filter_value in normalized_data.items():
+            # Process filters in order (filter1, filter2, filter3, etc.) rather than in dictionary order
+            # This ensures proper cascading of filter values
+            for i in range(len(self.filter_frames)):
+                filter_key = f"filter{i+1}"
+
+                # Skip if this filter isn't in the normalized data
+                if filter_key not in normalized_data:
+                    logger.debug(f"{filter_key} not found in vision results, skipping")
+                    continue
+
+                filter_value = normalized_data[filter_key]
                 if not filter_value:
                     # Skip empty values
+                    logger.debug(f"{filter_key} has empty value, skipping")
                     continue
 
                 # Convert filter1 to index 0, etc.
-                filter_index = int(filter_key.replace("filter", "")) - 1
-
-                # Check if we have this filter
-                if filter_index < 0 or filter_index >= len(self.filter_frames):
-                    logger.warning(
-                        f"Filter index {filter_index} out of range, skipping"
-                    )
-                    continue
+                filter_index = i  # We're already iterating in order
 
                 logger.debug(
                     f"Setting {filter_key} (index {filter_index}) to '{filter_value}'"
                 )
 
-                # For filter2, try to find a matching value with fuzzy search
-                if filter_index == 1:
-                    # Get available values for filter2
+                # For filter1, set value and trigger cascade to populate subsequent filter values
+                if filter_index == 0:
+                    # Set the value
+                    self.filter_frames[filter_index]["fuzzy"].set(str(filter_value))
+
+                    # Trigger filter cascade to populate filter2 values
+                    self._on_filter_selected(filter_index)
+
+                    # Process events to ensure UI updates before continuing
+                    QApplication.processEvents()
+
+                    # Skip the default setting at the end of the loop since we've already set it
+                    continue
+                # For all other filters (filter2, filter3, filter4, etc.), try to find a matching value using fuzzy_frames
+                else:
+                    # Get available values for this filter
                     available_values = self._get_available_filter_values(filter_index)
                     logger.debug(
-                        f"Available values for filter2: {len(available_values)}"
+                        f"Available values for filter{filter_index + 1}: {len(available_values)}"
                     )
 
                     if available_values:
-                        # Load entries for fuzzy matching
-                        self._fuzzy_matcher.load_entries("invoice", available_values)
-
-                        # Try fuzzy matching
                         filter_value_str = str(filter_value).strip()
-                        match_result = self._fuzzy_matcher.find_match(
-                            filter_value_str, "invoice", threshold=0.8
-                        )
 
-                        # Set the value (either match or raw value)
-                        if match_result["match_found"]:
-                            exact_match = match_result["best_match"]
+                        # Update the fuzzy frame with available values
+                        fuzzy_frame = self.filter_frames[filter_index]["fuzzy"]
+                        fuzzy_frame.all_values = available_values
+
+                        # Set the value to trigger fuzzy search
+                        fuzzy_frame.set(filter_value_str)
+
+                        # Force update of the listbox to get matches
+                        fuzzy_frame._update_listbox()
+
+                        # Check if we have any matches
+                        if fuzzy_frame.listbox.count() > 0:
+                            # Get the top match (first item in the listbox)
+                            top_match = fuzzy_frame.listbox.item(0).text()
                             logger.debug(
-                                f"Found fuzzy match for filter2: '{exact_match}' with score {match_result['confidence']}"
+                                f"Found fuzzy match for filter{filter_index + 1} using fuzzy_frames: '{top_match}'"
                             )
-                            self.filter_frames[filter_index]["fuzzy"].set(exact_match)
+                            fuzzy_frame.set(top_match)
+
+                            # If this isn't the last filter, trigger cascade to populate next filter
+                            if filter_index < len(self.filter_frames) - 1:
+                                self._on_filter_selected(filter_index)
+                                QApplication.processEvents()
                         else:
+                            # No matches found, keep the original value
                             logger.debug(
-                                f"No match found for filter2 '{filter_value_str}' in Excel"
+                                f"No match found for filter{filter_index + 1} '{filter_value_str}' in Excel using fuzzy_frames"
                             )
-                            self.filter_frames[filter_index]["fuzzy"].set(
-                                filter_value_str
-                            )
+                            fuzzy_frame.set(filter_value_str)
                     else:
                         # No available values, set directly
                         logger.debug(
-                            f"No available values for filter2, setting directly: '{filter_value}'"
+                            f"No available values for filter{filter_index + 1}, setting directly: '{filter_value}'"
                         )
                         self.filter_frames[filter_index]["fuzzy"].set(str(filter_value))
-                else:
-                    # For other filters, set value directly
-                    self.filter_frames[filter_index]["fuzzy"].set(str(filter_value))
 
                 # Update UI after each filter
                 QApplication.processEvents()
