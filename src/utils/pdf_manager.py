@@ -383,15 +383,17 @@ class PDFManager:
                 # Move to final location with versioning
                 try:
                     # Use our versioning method to handle existing files
-                    final_path, versioned_path = self.move_pdf_with_versioning(source_path, output_path)
+                    final_path, old_path = self.move_pdf_with_versioning(source_path, output_path, task)
                     logger.info(
                         f"Successfully moved PDF to final location: {final_path}"
                     )
 
                     # Set the processed location in the task
                     task.processed_pdf_location = final_path
-                    if versioned_path:
-                        task.versioned_pdf_path = versioned_path
+
+                    # Log if an old file was created
+                    if old_path:
+                        logger.debug(f"Old version of file stored at: {old_path}")
 
                     # Remove the original file from the source folder
                     try:
@@ -482,23 +484,21 @@ class PDFManager:
                 f"Reverted PDF from {task.processed_pdf_location} to {task.original_pdf_location}"
             )
 
-            # Restore the 'old_' versioned file if it exists
-            if task.versioned_pdf_path and os.path.exists(task.versioned_pdf_path):
-                # Construct the original name of the 'old_' file (without timestamp and 'old_' prefix)
-                target_dir = os.path.dirname(task.processed_pdf_location)
-                # The original name of the 'old_' file is the name of the file that replaced it.
-                original_filename_of_old_file = os.path.basename(task.processed_pdf_location)
-                original_path_of_old_file = os.path.join(target_dir, original_filename_of_old_file)
-                # Ensure we are not trying to move a file onto itself if names somehow collide, though unlikely with 'old_' prefix logic.
-                if not self._paths_equal(task.versioned_pdf_path, original_path_of_old_file):
+            # Check if we have a versioned file path stored in the task
+            if hasattr(task, 'versioned_pdf_path') and task.versioned_pdf_path:
+                versioned_path = task.versioned_pdf_path
+                if os.path.exists(versioned_path):
                     try:
-                        shutil.move(task.versioned_pdf_path, original_path_of_old_file)
-                        logger.info(f"Restored versioned file from {task.versioned_pdf_path} to {original_path_of_old_file}")
-                    except Exception as e:
-                        logger.warning(f"Could not restore versioned file {task.versioned_pdf_path} to {original_path_of_old_file}: {e}")
+                        # Restore the old file to its original name (without the "old_" prefix)
+                        shutil.move(versioned_path, task.processed_pdf_location)
+                        logger.info(
+                            f"Restored original file from {versioned_path} to {task.processed_pdf_location}"
+                        )
+                    except Exception as restore_error:
+                        logger.warning(f"Could not restore original file: {str(restore_error)}")
+                        # Continue even if restoration fails - the revert operation itself succeeded
                 else:
-                    logger.warning(f"Skipping restoration of versioned file as target path is identical: {task.versioned_pdf_path}")
-
+                    logger.debug(f"Versioned file not found: {versioned_path}")
 
             return True
 
@@ -507,7 +507,7 @@ class PDFManager:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
 
-    def move_pdf_with_versioning(self, source_path: str, target_path: str) -> str:
+    def move_pdf_with_versioning(self, source_path: str, target_path: str, task=None) -> tuple:
         """Move a PDF file to a target path, handling existing files by versioning.
 
         If a file already exists at the target path, it will be renamed with an 'old_' prefix
@@ -517,15 +517,19 @@ class PDFManager:
         Args:
             source_path: Path to the source PDF file
             target_path: Destination path where the file should be moved
+            task: Optional PDFTask object to store the versioned file path
 
         Returns:
-            str: The final path of the moved file
+            tuple: (final_path, old_path) where:
+                - final_path is the path where the file was moved
+                - old_path is the path of the renamed file (or None if no file was renamed)
 
         Raises:
             FileNotFoundError: If the source file doesn't exist
             ValueError: If the file cannot be moved
         """
         logger = get_logger()
+        old_path = None
         try:
             # Normalize paths
             source_path = normalize_path(source_path)
@@ -561,15 +565,21 @@ class PDFManager:
                 try:
                     shutil.move(target_path, old_path)
                     logger.debug(f"Renamed existing file to: {old_path}")
+
+                    # Store the versioned file path in the task if provided
+                    if task and hasattr(task, 'versioned_pdf_path'):
+                        task.versioned_pdf_path = old_path
+                        logger.debug(f"Stored versioned file path in task: {old_path}")
                 except Exception as e:
                     logger.warning(f"Error renaming existing file: {str(e)}")
+                    old_path = None
                     # Continue anyway - we'll try to copy the new file
 
             # Copy the new file to the target location
             shutil.copy2(source_path, target_path)
             logger.debug(f"Successfully copied file to: {target_path}")
 
-            return target_path, old_path if 'old_path' in locals() else None
+            return target_path, old_path
 
         except Exception as e:
             logger.error(f"Error in move_pdf_with_versioning: {str(e)}")
