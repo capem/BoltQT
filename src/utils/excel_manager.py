@@ -192,11 +192,11 @@ class ExcelManager(QObject):
                 wb.close()
                 return
 
-            total_rows = ws.max_row
+            total_rows = ws.max_row - 1 # Exclude header row
             processed_rows = 0
 
             # Iterate through all cells to find hyperlinks
-            for row_idx, row in enumerate(ws.iter_rows()): # 0-based index from iter_rows
+            for row_idx, row in enumerate(ws.iter_rows(min_row=2)): # 0-based index from iter_rows
                 for col_idx, cell in enumerate(row): # 0-based index from row iteration
                     if cell.hyperlink:
                         try:
@@ -296,7 +296,7 @@ class ExcelManager(QObject):
         try:
             logger = get_logger()
             logger.info(
-                f"Updating PDF link in Excel: file={file_path}, sheet={sheet_name}, row={row_idx}, column={column_name}"
+                f"Updating PDF link in Excel: file={file_path}, sheet={sheet_name}, row_idx={row_idx}, column={column_name}"
             )
 
             # Normalize paths using path_utils

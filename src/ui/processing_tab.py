@@ -512,7 +512,7 @@ class ProcessingTab(QWidget):
             value = match.group(1).strip()
             row_num = int(match.group(2))
             logger.debug(
-                f"UI parsed filter2 value: '{formatted_value}' -> value='{value}', row={row_num - 2}"
+                f"UI parsed filter2 value: '{formatted_value}' -> value='{value}', row_idx={row_num - 2}"
             )
             return value, row_num - 2  # Convert back to 0-based index
 
@@ -813,7 +813,7 @@ class ProcessingTab(QWidget):
             if i == 1:
                 clean_value, row_idx = self._parse_filter2_value(value)
                 logger.debug(
-                    f"Processing filter2 value: '{value}' -> clean='{clean_value}', row={row_idx}"
+                    f"Processing filter2 value: '{value}' -> clean='{clean_value}', row_idx={row_idx}"
                 )
                 value = clean_value
 
