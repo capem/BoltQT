@@ -233,7 +233,7 @@ class ProcessingThread(QThread):
         return filter_columns
 
     def _create_new_row(
-        self, filter_columns: List[str], filter_values: List[str]
+        self, filter_columns: List[str], filter_values: List[str], task: Optional[PDFTask] = None
     ) -> int:
         """Create a new Excel row with the given filter values."""
         logger = get_logger()
@@ -250,6 +250,11 @@ class ProcessingThread(QThread):
 
         # Update the cached DataFrame
         self._excel_data_cache["data"] = self.excel_manager.excel_data
+
+        # Mark the task as having created a new row
+        if task:
+            task.created_new_row = True
+            logger.debug(f"Marked task {task.task_id} as having created a new row")
 
         filter2_value = filter_values[1] if len(filter_values) > 1 else "N/A"
         logger.info(f"Added new row {new_row_idx} (Excel row {new_row_idx + 2}) for filter2 value '{filter2_value}'")
@@ -272,7 +277,7 @@ class ProcessingThread(QThread):
         else:
             # Create new row with clean filter2 value
             logger.debug(f"Creating new row for filter values: {filter_values}")
-            return self._create_new_row(filter_columns, filter_values)
+            return self._create_new_row(filter_columns, filter_values, task)
 
     def _create_template_data(
         self,

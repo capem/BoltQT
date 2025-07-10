@@ -405,33 +405,49 @@ class QueueDisplay(QWidget):
             # Get required configuration
             config = processing_tab.config_manager.get_config()
 
-            # Revert Excel hyperlink
-            excel_success = processing_tab.excel_manager.revert_pdf_link(
-                excel_file=config["excel_file"],
-                sheet_name=config["excel_sheet"],
-                row_idx=task.row_idx,
-                filter2_col=config["filter2_column"],
-                original_hyperlink=task.original_excel_hyperlink,
-                original_value=task.filter_values[1]
-                if len(task.filter_values) > 1
-                else "",
-            )
+            excel_success = False
+            pdf_success = False
+
+            # Check if this task created a new row
+            if getattr(task, 'created_new_row', False):
+                # Remove the newly created row
+                excel_success = processing_tab.excel_manager.remove_row(
+                    file_path=config["excel_file"],
+                    sheet_name=config["excel_sheet"],
+                    row_idx=task.row_idx,
+                )
+                if excel_success:
+                    # Update the cached DataFrame in processing thread
+                    processing_tab.processing_thread._excel_data_cache["data"] = processing_tab.excel_manager.excel_data
+            else:
+                # Revert Excel hyperlink for existing row
+                excel_success = processing_tab.excel_manager.revert_pdf_link(
+                    excel_file=config["excel_file"],
+                    sheet_name=config["excel_sheet"],
+                    row_idx=task.row_idx,
+                    filter2_col=config["filter2_column"],
+                    original_hyperlink=task.original_excel_hyperlink,
+                    original_value=task.filter_values[1]
+                    if len(task.filter_values) > 1
+                    else "",
+                )
 
             # Revert PDF location
             pdf_success = processing_tab.pdf_manager.revert_pdf_location(task=task)
 
             if excel_success and pdf_success:
-                # Update task status
-                task.status = "reverted"
-                task.end_time = datetime.now()
+                # Remove the task from the tasks dictionary
+                if task.task_id in processing_tab.processing_thread.tasks:
+                    del processing_tab.processing_thread.tasks[task.task_id]
 
                 # Update display
                 self.update_display(processing_tab.processing_thread.tasks)
 
+                action_type = "removed" if getattr(task, 'created_new_row', False) else "reverted"
                 QMessageBox.information(
                     self,
                     "Revert Successful",
-                    f"Task for '{os.path.basename(task.pdf_path)}' has been reverted successfully.",
+                    f"Task for '{os.path.basename(task.pdf_path)}' has been {action_type} successfully.",
                 )
             else:
                 QMessageBox.warning(

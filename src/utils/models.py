@@ -26,6 +26,7 @@ class PDFTask:
     versioned_pdf_path: Optional[str] = None  # Path of the 'old_' versioned file if one was created
     rotation_angle: int = 0
     skip_type: str = "in_place"  # 'in_place' (default) or 'to_folder'
+    created_new_row: bool = False  # True if this task created a new Excel row
 
     @staticmethod
     def generate_id() -> str:
@@ -40,6 +41,16 @@ class PDFTask:
 
     def can_revert(self) -> bool:
         """Check if the task can be reverted."""
+        # For tasks that created new rows, we can revert if we have the basic info
+        if self.created_new_row:
+            return (
+                self.status == "completed"
+                and self.row_idx >= 0
+                and self.original_pdf_location is not None
+                and self.processed_pdf_location is not None
+            )
+
+        # For tasks that updated existing rows, we need the original hyperlink
         return (
             self.status == "completed"
             and self.original_excel_hyperlink is not None

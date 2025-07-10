@@ -796,3 +796,127 @@ class ExcelManager(QObject):
                         logger.error(f"Backup restore traceback: {traceback.format_exception(type(backup_e), backup_e, backup_e.__traceback__)}")
 
             raise
+
+    def remove_row(
+        self,
+        file_path: str,
+        sheet_name: str,
+        row_idx: int,  # 0-based row index
+    ) -> bool:
+        """Remove a row from the Excel file.
+
+        Args:
+            file_path: Path to the Excel file.
+            sheet_name: Name of the sheet.
+            row_idx: 0-based row index to remove.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        try:
+            logger = get_logger()
+            logger.info(f"Removing row {row_idx} from {file_path}, sheet {sheet_name}")
+
+            # Create a backup
+            backup_file = file_path + ".bak"
+            copy2(file_path, backup_file)
+            logger.debug(f"Created backup at {backup_file}")
+
+            try:
+                # Load workbook
+                wb = load_workbook(file_path)
+                ws = wb[sheet_name]
+
+                # Convert 0-based row index to 1-based Excel row (add 2 for header)
+                excel_row = row_idx + 2
+
+                # Check if row exists
+                if excel_row > ws.max_row:
+                    logger.warning(f"Row {excel_row} does not exist (max row: {ws.max_row})")
+                    return False
+
+                # Delete the row
+                ws.delete_rows(excel_row)
+                logger.debug(f"Deleted Excel row {excel_row}")
+
+                # Update table references if they exist
+                for table in ws.tables.values():
+                    try:
+                        current_ref = table.ref
+                        ref_parts = current_ref.split(":")
+                        if len(ref_parts) == 2:
+                            start_ref = ref_parts[0]
+                            end_ref = ref_parts[1]
+
+                            # Extract row numbers
+                            end_row = int("".join(filter(str.isdigit, end_ref)))
+
+                            # If the deleted row was within the table, adjust the table range
+                            if excel_row <= end_row:
+                                # Get column letters
+                                start_col = "".join(filter(str.isalpha, start_ref))
+                                end_col = "".join(filter(str.isalpha, end_ref))
+
+                                # Update table reference
+                                new_end_row = max(end_row - 1, int("".join(filter(str.isdigit, start_ref))))
+                                table.ref = f"{start_col}1:{end_col}{new_end_row}"
+                                logger.debug(f"Updated table reference to: {table.ref}")
+                    except Exception as e:
+                        logger.warning(f"Error updating table reference: {str(e)}")
+                        continue
+
+                # Save workbook
+                wb.save(file_path)
+
+                # Update our cached DataFrame if it exists
+                if self.excel_data is not None and row_idx < len(self.excel_data):
+                    self.excel_data = self.excel_data.drop(self.excel_data.index[row_idx]).reset_index(drop=True)
+                    logger.debug(f"Updated cached DataFrame, new length: {len(self.excel_data)}")
+
+                # Update hyperlink cache - remove entries for this row and shift others
+                self._cache_lock.lockForWrite()
+                try:
+                    # Remove entries for the deleted row
+                    keys_to_remove = [key for key in self._hyperlink_cache.keys() if isinstance(key, tuple) and key[0] == row_idx]
+                    for key in keys_to_remove:
+                        del self._hyperlink_cache[key]
+
+                    # Shift entries for rows after the deleted row
+                    keys_to_update = [(key, value) for key, value in self._hyperlink_cache.items()
+                                    if isinstance(key, tuple) and key[0] > row_idx]
+                    for (old_row, col), value in keys_to_update:
+                        del self._hyperlink_cache[(old_row, col)]
+                        self._hyperlink_cache[(old_row - 1, col)] = value
+
+                    logger.debug("Updated hyperlink cache after row removal")
+                finally:
+                    self._cache_lock.unlock()
+
+                # Remove backup after successful operation
+                if path.exists(backup_file):
+                    remove(backup_file)
+                    logger.debug("Removed backup file after successful row removal")
+
+                logger.info(f"Successfully removed row {row_idx} (Excel row {excel_row})")
+                return True
+
+            finally:
+                if "wb" in locals():
+                    wb.close()
+
+        except Exception as e:
+            logger = get_logger()
+            logger.error(f"Error removing row: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
+            # Try to restore from backup
+            if "backup_file" in locals() and path.exists(backup_file):
+                try:
+                    copy2(backup_file, file_path)
+                    logger.info("Restored from backup after error")
+                except Exception as backup_e:
+                    logger.error(f"Failed to restore from backup: {str(backup_e)}")
+                    if hasattr(backup_e, "__traceback__"):
+                        logger.error(f"Backup restore traceback: {traceback.format_exception(type(backup_e), backup_e, backup_e.__traceback__)}")
+
+            return False
