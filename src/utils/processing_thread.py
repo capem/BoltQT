@@ -20,6 +20,7 @@ class ProcessingThread(QThread):
 
     task_completed = pyqtSignal(str, str)  # task_id, status
     task_failed = pyqtSignal(str, str)  # task_id, error_message
+    task_started = pyqtSignal(str)  # task_id
 
     def __init__(
         self,
@@ -176,6 +177,8 @@ class ProcessingThread(QThread):
         for task_id, task in self.tasks.items():
             if task.status == "pending":
                 task.status = "processing"
+                # Emit signal to notify UI that task has started
+                self.task_started.emit(task_id)
                 return task, task_id
         return None, None
 

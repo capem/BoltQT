@@ -99,6 +99,7 @@ class ProcessingTab(QWidget):
         )
         self.processing_thread.task_completed.connect(self._on_task_completed)
         self.processing_thread.task_failed.connect(self._on_task_failed)
+        self.processing_thread.task_started.connect(self._on_task_started)
         self.processing_thread.start()
 
         # Create UI
@@ -849,6 +850,9 @@ class ProcessingTab(QWidget):
             f"Added PDF processing task {task.task_id} to queue with filter values: {filter_values}"
         )
 
+        # Immediately update the UI to show the new task
+        self._update_display()
+
         # Reset all fuzzy search inputs
         for frame in self.filter_frames:
             frame["fuzzy"].clear()
@@ -1027,6 +1031,9 @@ class ProcessingTab(QWidget):
         )
         self.processing_thread.tasks[task.task_id] = task
         logger.info(f"Created skipped task {task.task_id} for {skipped_path}")
+
+        # Immediately update the UI to show the new skipped task
+        self._update_display()
 
         # Load next PDF
         self._load_next_pdf()
@@ -1409,6 +1416,8 @@ class ProcessingTab(QWidget):
             for k, v in self.processing_thread.tasks.items()
             if v.status != "completed"
         }
+        # Immediately update the UI to reflect the changes
+        self._update_display()
 
     def _retry_failed(self) -> None:
         """Retry failed tasks."""
@@ -1416,6 +1425,8 @@ class ProcessingTab(QWidget):
             if task.status == "failed":
                 task.status = "pending"
                 task.error_msg = ""
+        # Immediately update the UI to reflect the changes
+        self._update_display()
 
     def _on_task_completed(self, task_id: str, status: str) -> None:
         """Handle task completion for PDF processing tasks.
@@ -1428,6 +1439,9 @@ class ProcessingTab(QWidget):
             task = self.processing_thread.tasks[task_id]
             task.status = status
             task.end_time = datetime.now()
+
+            # Immediately update the UI to reflect the status change
+            self._update_display()
 
             # If task is completed successfully, mark as processed but don't reload current PDF
             if status == "completed":
@@ -1480,6 +1494,28 @@ class ProcessingTab(QWidget):
             task.error_msg = error_msg
             task.end_time = datetime.now()
             logger.error(f"PDF processing task {task_id} failed: {error_msg}")
+
+            # Immediately update the UI to reflect the status change
+            self._update_display()
+
+            # Update status
+            self._update_status(f"Task failed: {error_msg}")
+
+            # Load next PDF if this was the current one
+            if (
+                self.current_pdf
+                and task.pdf_path
+                and self.pdf_manager._paths_equal(self.current_pdf, task.pdf_path)
+            ):
+                QTimer.singleShot(1000, self._load_next_pdf)
+
+    def _on_task_started(self, task_id: str) -> None:
+        """Handle task start."""
+        logger = get_logger()
+        logger.info(f"PDF processing task started: {task_id}")
+
+        # Immediately update the UI to reflect the status change
+        self._update_display()
 
     def _on_config_change(self) -> None:
         """Handle configuration changes."""
