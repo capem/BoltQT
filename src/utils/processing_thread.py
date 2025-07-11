@@ -13,6 +13,7 @@ from .excel_manager import ExcelManager
 from .logger import get_logger
 from .models import PDFTask
 from .pdf_manager import PDFManager
+from .performance_profiler import PerformanceProfiler
 
 
 class ProcessingThread(QThread):
@@ -47,6 +48,9 @@ class ProcessingThread(QThread):
             "columns": None,
         }
 
+        # Performance profiler
+        self._profiler = PerformanceProfiler()
+
     def run(self) -> None:
         """Process tasks in the queue."""
         logger = get_logger()
@@ -62,14 +66,18 @@ class ProcessingThread(QThread):
 
             try:
                 logger.info(f"Processing task {task_id}: {task_to_process.pdf_path}")
+                self._profiler.start_operation(f"process_task_{task_id}")
 
                 # Phase 1: Setup and validation
                 logger.debug("Phase 1: Setup and validation")
+                self._profiler.start_operation("setup_and_validation")
                 config = self.config_manager.get_config()
                 self._validate_config(config)
+                self._profiler.end_operation("setup_and_validation")
 
                 # Phase 2: Load Excel data and find matching row
                 logger.debug("Phase 2: Loading Excel data and finding matching row")
+                self._profiler.start_operation("excel_data_operations")
                 self._ensure_excel_data_loaded(config)
                 df = self._excel_data_cache["data"]
 
@@ -85,18 +93,16 @@ class ProcessingThread(QThread):
 
                 # Phase 3: Validate row data
                 logger.debug("Phase 3: Validating row data")
-                if row_idx >= len(df):
-                    # Reload Excel data if row index is out of bounds
-                    logger.warning(f"Row index {row_idx} out of bounds, reloading Excel data")
-                    self.excel_manager.load_excel_data(config["excel_file"], config["excel_sheet"], force_reload=True)
-                    self._excel_data_cache["data"] = self.excel_manager.excel_data
-                    df = self._excel_data_cache["data"]
 
-                    if row_idx >= len(df):
-                        logger.error(f"Row index {row_idx} still out of bounds after reload (df length: {len(df)})")
-                        raise Exception(
-                            f"Row index {row_idx} is still out of bounds after reloading Excel data (df length: {len(df)})"
-                        )
+                # Update our cache with the latest Excel data since we may have added a new row
+                self._excel_data_cache["data"] = self.excel_manager.excel_data
+                df = self._excel_data_cache["data"]
+
+                if row_idx >= len(df):
+                    logger.error(f"Row index {row_idx} out of bounds (df length: {len(df)})")
+                    raise Exception(
+                        f"Row index {row_idx} is out of bounds (df length: {len(df)})"
+                    )
 
                 row_data = df.iloc[row_idx]
 
@@ -106,6 +112,7 @@ class ProcessingThread(QThread):
                     row_data, filter_columns, filter_values, row_idx
                 )
                 template_data["processed_folder"] = config["processed_folder"]
+                self._profiler.end_operation("excel_data_operations")
 
                 # Phase 5: Process PDF
                 logger.debug("Phase 5: Processing PDF")
@@ -115,6 +122,7 @@ class ProcessingThread(QThread):
 
                 # Try to update Excel hyperlink, but continue even if it fails
                 try:
+                    self._profiler.start_operation("excel_hyperlink_update")
                     filter_column = (
                         filter_columns[1] if len(filter_columns) > 1 else None
                     )
@@ -126,6 +134,7 @@ class ProcessingThread(QThread):
                         processed_path,
                         filter_column,
                     )
+                    self._profiler.end_operation("excel_hyperlink_update")
 
                     # Store task details for potential revert operation
                     task_to_process.row_idx = row_idx
@@ -149,6 +158,11 @@ class ProcessingThread(QThread):
                 # Update task status and emit completion signal
                 task_to_process.status = "completed"
                 task_to_process.end_time = datetime.now()
+                self._profiler.end_operation(f"process_task_{task_id}")
+
+                # Clear workbook cache to free memory after each task
+                self.excel_manager.clear_workbook_cache()
+
                 self.task_completed.emit(task_id, "completed")
                 logger.info(f"Task {task_id} completed successfully")
 
@@ -164,6 +178,11 @@ class ProcessingThread(QThread):
                     self.tasks[task_id].status = "failed"
                     self.tasks[task_id].error_msg = error_msg
                     self.tasks[task_id].end_time = datetime.now()
+
+                self._profiler.end_operation(f"process_task_{task_id}")
+
+                # Clear workbook cache to free memory after failed task
+                self.excel_manager.clear_workbook_cache()
 
                 self.task_failed.emit(task_id, error_msg)
                 logger.error(f"Task {task_id} failed: {error_msg}")
@@ -249,6 +268,7 @@ class ProcessingThread(QThread):
             config["excel_sheet"],
             filter_columns,
             filter_values,
+            create_backup=False,  # Skip backup for performance
         )
 
         # Update the cached DataFrame
@@ -355,4 +375,7 @@ class ProcessingThread(QThread):
         logger.info("Stopping PDF processing thread")
         self.running = False
         self.wait()
-        logger.debug("PDF processing thread stopped")
+
+    def print_performance_stats(self) -> None:
+        """Print performance statistics for debugging."""
+        self._profiler.print_summary()

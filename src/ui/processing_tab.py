@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 
 from ..utils import ConfigManager, ExcelManager, PDFManager, PDFTask
 from ..utils.logger import get_logger
+from ..utils.performance_profiler import global_profiler
 from ..utils.processing_thread import ProcessingThread
 from ..utils.vision_manager import FuzzyMatcher, VisionManager
 from .fuzzy_search import FuzzySearchFrame
@@ -107,6 +108,13 @@ class ProcessingTab(QWidget):
 
         # Register for config changes
         self.config_manager.config_changed.connect(self._on_config_change)
+
+    def _load_initial_filter_values(self) -> None:
+        """Load initial filter values after UI setup is complete."""
+        if self.filter_frames:
+            logger = get_logger()
+            logger.debug("Loading initial filter values after UI setup")
+            self._load_filter_values(0)
 
     def _create_section_frame(self, title: str) -> tuple[QFrame, QVBoxLayout]:
         """Create a styled frame for a section."""
@@ -449,9 +457,9 @@ class ProcessingTab(QWidget):
         # Add stretch at the end
         self.filters_layout.addStretch()
 
-        # Load initial values for first filter
-        if self.filter_frames:
-            self._load_filter_values(0)
+        # Defer filter loading until after initialization is complete
+        # This prevents redundant Excel data loading during startup
+        QTimer.singleShot(100, self._load_initial_filter_values)
 
     def _format_filter2_value(
         self, value: str, row_idx: int
@@ -535,9 +543,11 @@ class ProcessingTab(QWidget):
                     f"Loading filter values for filter {filter_index + 1} in vision mode (for fuzzy search)"
                 )
 
-            # Load Excel data if needed
+            # Load Excel data if needed (only if not already loaded)
             if self.excel_manager.excel_data is None:
                 try:
+                    logger = get_logger()
+                    logger.debug("Excel data not loaded, loading for filter values...")
                     self.excel_manager.load_excel_data(
                         config["excel_file"], config["excel_sheet"]
                     )
@@ -568,6 +578,9 @@ class ProcessingTab(QWidget):
                     for i in range(len(self.filter_frames)):
                         self.filter_frames[i]["fuzzy"].set_values([])
                     return
+            else:
+                logger = get_logger()
+                logger.debug("Excel data already loaded, using cached data for filters")
 
             # If we have no filters, exit
             if not self.filter_frames or filter_index >= len(self.filter_frames):
@@ -790,10 +803,12 @@ class ProcessingTab(QWidget):
         but this is the actual processing task that will be tracked in the queue.
         """
         logger = get_logger()
+        global_profiler.start_operation("process_file_button_click")
 
         if not self.current_pdf:
             logger.info("Process attempted with no file selected")
             self._update_status("No file selected")
+            global_profiler.end_operation("process_file_button_click")
             return
 
         # Get filter values
@@ -860,6 +875,8 @@ class ProcessingTab(QWidget):
         # Load next file
         self._load_next_pdf()
 
+        global_profiler.end_operation("process_file_button_click")
+
     def _select_pdf_file(self) -> None:
         """Handle manual PDF file selection."""
         try:
@@ -891,11 +908,8 @@ class ProcessingTab(QWidget):
                 # Update file info label
                 self._update_file_info_label(file_path)
 
-                # Refresh Excel data
-                excel_file = config.get("excel_file")
-                excel_sheet = config.get("excel_sheet")
-                if excel_file and excel_sheet:
-                    self.excel_manager.load_excel_data(excel_file, excel_sheet)
+                # Excel data should already be loaded from initialization
+                # No need to reload unless there's a specific reason
 
                 # Clear and update filters
                 for frame in self.filter_frames:
@@ -1748,3 +1762,82 @@ class ProcessingTab(QWidget):
         except Exception as e:
             logger.error(f"Error in manual vision preprocessing: {str(e)}")
             self._handle_error(e, "manual vision preprocessing")
+
+    def print_performance_stats(self) -> None:
+        """Print performance statistics for all components."""
+        logger = get_logger()
+        logger.info("=== PERFORMANCE PROFILING REPORT ===")
+
+        # Print stats from processing thread
+        if hasattr(self.processing_thread, '_profiler'):
+            logger.info("--- Processing Thread Stats ---")
+            self.processing_thread.print_performance_stats()
+
+        # Print stats from Excel manager
+        if hasattr(self.excel_manager, '_profiler'):
+            logger.info("--- Excel Manager Stats ---")
+            self.excel_manager._profiler.print_summary()
+
+        # Print stats from PDF manager
+        if hasattr(self.pdf_manager, '_profiler'):
+            logger.info("--- PDF Manager Stats ---")
+            self.pdf_manager._profiler.print_summary()
+
+        # Print global profiler stats
+        logger.info("--- Global Profiler Stats ---")
+        global_profiler.print_summary()
+
+        logger.info("=== END PERFORMANCE PROFILING REPORT ===")
+
+        # Print performance improvement suggestions
+        self._print_performance_suggestions()
+
+    def _print_performance_suggestions(self) -> None:
+        """Print performance improvement suggestions based on timing data."""
+        logger = get_logger()
+        logger.info("=== PERFORMANCE OPTIMIZATION SUGGESTIONS ===")
+
+        # Check Excel operations
+        if hasattr(self.excel_manager, '_profiler'):
+            excel_stats = self.excel_manager._profiler.get_all_stats()
+
+            if 'add_new_row' in excel_stats and excel_stats['add_new_row']:
+                avg_time = excel_stats['add_new_row']['average']
+                if avg_time > 5.0:
+                    logger.info(f"🔴 Excel add_new_row is slow ({avg_time:.1f}s avg) - Consider:")
+                    logger.info("   - Using faster Excel library (xlsxwriter)")
+                    logger.info("   - Batch operations")
+                    logger.info("   - Local file caching")
+                elif avg_time > 2.0:
+                    logger.info(f"🟡 Excel add_new_row is moderate ({avg_time:.1f}s avg)")
+                else:
+                    logger.info(f"🟢 Excel add_new_row is fast ({avg_time:.1f}s avg)")
+
+            if 'load_workbook' in excel_stats and excel_stats['load_workbook']:
+                avg_time = excel_stats['load_workbook']['average']
+                if avg_time > 3.0:
+                    logger.info(f"🔴 Excel load_workbook is slow ({avg_time:.1f}s avg)")
+                elif avg_time > 1.0:
+                    logger.info(f"🟡 Excel load_workbook is moderate ({avg_time:.1f}s avg)")
+                else:
+                    logger.info(f"🟢 Excel load_workbook is fast ({avg_time:.1f}s avg)")
+
+            if 'save_workbook' in excel_stats and excel_stats['save_workbook']:
+                avg_time = excel_stats['save_workbook']['average']
+                if avg_time > 3.0:
+                    logger.info(f"🔴 Excel save_workbook is slow ({avg_time:.1f}s avg)")
+                elif avg_time > 1.0:
+                    logger.info(f"🟡 Excel save_workbook is moderate ({avg_time:.1f}s avg)")
+                else:
+                    logger.info(f"🟢 Excel save_workbook is fast ({avg_time:.1f}s avg)")
+
+        logger.info("=== END OPTIMIZATION SUGGESTIONS ===")
+
+    def keyPressEvent(self, event) -> None:
+        """Handle key press events for shortcuts."""
+        # Ctrl+Shift+P for performance profiling
+        if (event.key() == Qt.Key.Key_P and
+            event.modifiers() == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)):
+            self.print_performance_stats()
+        else:
+            super().keyPressEvent(event)

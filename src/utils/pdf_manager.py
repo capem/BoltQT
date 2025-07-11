@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 from .logger import get_logger
 from .models import PDFTask
 from .path_utils import is_same_path, normalize_path
+from .performance_profiler import PerformanceProfiler
 from .template_manager import TemplateManager
 
 
@@ -26,6 +27,8 @@ class PDFManager:
         # Set to track processed files
         self._processed_files = set()
         self._viewer_ref = None
+        # Performance profiler
+        self._profiler = PerformanceProfiler()
 
     def _normalize_path(self, path: str) -> str:
         """Normalize a path for consistent comparison.
@@ -314,6 +317,7 @@ class PDFManager:
             output_template: Template string for output path generation.
         """
         logger = get_logger()
+        self._profiler.start_operation("process_pdf")
         # Normalize the source path using path_utils
         source_path = normalize_path(task.pdf_path)
         logger.info(f"Processing PDF file: {source_path}")
@@ -358,12 +362,15 @@ class PDFManager:
                     raise ValueError(f"Could not create output directory: {str(e)}")
 
                 # Copy PDF to temporary location
+                self._profiler.start_operation("copy_pdf_to_temp")
                 temp_pdf = os.path.join(temp_dir, "temp.pdf")
                 try:
                     shutil.copy2(source_path, temp_pdf)
                     logger.debug(f"Copied PDF to temporary location: {temp_pdf}")
+                    self._profiler.end_operation("copy_pdf_to_temp")
                 except Exception as e:
                     logger.error(f"Error copying PDF to temp location: {str(e)}")
+                    self._profiler.end_operation("copy_pdf_to_temp")
                     raise ValueError(
                         f"Could not copy PDF to temporary location: {str(e)}"
                     )
@@ -383,7 +390,9 @@ class PDFManager:
                 # Move to final location with versioning
                 try:
                     # Use our versioning method to handle existing files
+                    self._profiler.start_operation("move_pdf_with_versioning")
                     final_path, old_path = self.move_pdf_with_versioning(source_path, output_path, task)
+                    self._profiler.end_operation("move_pdf_with_versioning")
                     logger.info(
                         f"Successfully moved PDF to final location: {final_path}"
                     )
@@ -413,13 +422,16 @@ class PDFManager:
                         self.mark_file_processed(source_path)
 
                     logger.info("PDF processing completed successfully")
+                    self._profiler.end_operation("process_pdf")
                 except Exception as e:
                     logger.error(f"Error moving PDF to final location: {str(e)}")
+                    self._profiler.end_operation("process_pdf")
                     raise ValueError(f"Could not move PDF to final location: {str(e)}")
 
             except Exception as e:
                 logger.error(f"Error processing PDF: {str(e)}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
+                self._profiler.end_operation("process_pdf")
                 raise
 
     def _remove_file_with_retry(

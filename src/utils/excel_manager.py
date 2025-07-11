@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import traceback
 from datetime import datetime
 from os import path, remove
@@ -13,6 +14,7 @@ from PyQt6.QtCore import QObject, QReadWriteLock
 
 from .logger import get_logger
 from .path_utils import make_relative_path, normalize_path, split_drive_or_unc
+from .performance_profiler import PerformanceProfiler, profile_method
 
 
 class ExcelManager(QObject):
@@ -30,6 +32,13 @@ class ExcelManager(QObject):
         self._column_cache: Dict[str, list] = {}  # Cache for column names
         self._header_cache: Dict[str, Dict[str, int]] = {} # Cache for header {sheet_key: {col_name: col_idx}}
 
+        # Performance profiler
+        self._profiler = PerformanceProfiler()
+
+        # Workbook caching for performance
+        self._cached_workbook = None
+        self._cached_workbook_path = None
+
     def clear_caches(self) -> None:
         """Clear all cached data."""
         logger = get_logger()
@@ -42,9 +51,54 @@ class ExcelManager(QObject):
             self._column_cache.clear()
             self._header_cache.clear()
             self.excel_data = None
+            # Clear workbook cache
+            if self._cached_workbook:
+                try:
+                    self._cached_workbook.close()
+                except:
+                    pass
+                self._cached_workbook = None
+                self._cached_workbook_path = None
             logger.debug("All Excel caches cleared")
         finally:
             self._cache_lock.unlock()
+
+    def _get_cached_workbook(self, file_path: str, use_cache: bool = True):
+        """Get a workbook, using cache if available and requested."""
+        if use_cache and self._cached_workbook and self._cached_workbook_path == file_path:
+            logger = get_logger()
+            logger.debug(f"Using cached workbook for {file_path}")
+            return self._cached_workbook, False  # False = not newly loaded
+
+        # Load new workbook
+        if self._cached_workbook and self._cached_workbook_path != file_path:
+            # Close previous workbook
+            try:
+                self._cached_workbook.close()
+            except Exception:
+                pass
+
+        self._profiler.start_operation("load_workbook")
+        wb = load_workbook(file_path)
+        self._profiler.end_operation("load_workbook")
+
+        if use_cache:
+            self._cached_workbook = wb
+            self._cached_workbook_path = file_path
+
+        return wb, True  # True = newly loaded
+
+    def clear_workbook_cache(self) -> None:
+        """Clear the workbook cache to free memory."""
+        if self._cached_workbook:
+            try:
+                self._cached_workbook.close()
+            except Exception:
+                pass
+            self._cached_workbook = None
+            self._cached_workbook_path = None
+            logger = get_logger()
+            logger.debug("Workbook cache cleared")
 
     def load_excel_data(
         self, file_path: str, sheet_name: str, force_reload: bool = False
@@ -64,6 +118,7 @@ class ExcelManager(QObject):
 
         try:
             logger = get_logger()
+            self._profiler.start_operation("load_excel_data")
 
             # Check if we need to reload
             if (
@@ -73,6 +128,7 @@ class ExcelManager(QObject):
                 and self._last_sheet == sheet_name
             ):
                 logger.debug(f"Using cached Excel data (force_reload={force_reload})")
+                self._profiler.end_operation("load_excel_data")
                 return False
 
             logger.debug(f"Loading Excel data from {file_path}, sheet: {sheet_name}")
@@ -121,6 +177,7 @@ class ExcelManager(QObject):
             if sheet_key in self._header_cache:
                 del self._header_cache[sheet_key]
 
+            self._profiler.end_operation("load_excel_data")
             return True
 
         except Exception as e:
@@ -137,6 +194,7 @@ class ExcelManager(QObject):
                 self._hyperlink_cache.clear()
             finally:
                 self._cache_lock.unlock()
+            self._profiler.end_operation("load_excel_data")
             raise
 
     def preload_hyperlinks_async(
@@ -305,8 +363,8 @@ class ExcelManager(QObject):
 
             logger.debug(f"Linking to PDF: {normalized_pdf_path}")
 
-            # Load workbook
-            wb = load_workbook(file_path)
+            # Load workbook (with caching for performance)
+            wb, newly_loaded = self._get_cached_workbook(file_path, use_cache=True)
             ws = wb[sheet_name]
 
             # Find the column index (0-based) using helper
@@ -569,6 +627,7 @@ class ExcelManager(QObject):
         sheet_name: str,
         columns: List[str],
         values: List[str],
+        create_backup: bool = True,
     ) -> Tuple[Dict[str, Any], int]:
         """Add a new row to the Excel file.
 
@@ -577,6 +636,7 @@ class ExcelManager(QObject):
         """
         try:
             logger = get_logger()
+            self._profiler.start_operation("add_new_row")
             logger.debug(
                 f"Cache state before adding new row - size: {len(self._hyperlink_cache)}"
             )
@@ -589,14 +649,20 @@ class ExcelManager(QObject):
 
             logger.info(f"Adding new row with values: {dict(zip(columns, values))}")
 
-            # Create a backup
-            backup_file = file_path + ".bak"
-            copy2(file_path, backup_file)
-            logger.debug(f"Created backup at {backup_file}")
+            # Create a backup (optional for performance)
+            backup_file = None
+            if create_backup:
+                self._profiler.start_operation("create_backup")
+                backup_file = file_path + ".bak"
+                copy2(file_path, backup_file)
+                logger.debug(f"Created backup at {backup_file}")
+                self._profiler.end_operation("create_backup")
+            else:
+                logger.debug("Skipping backup creation for performance")
 
             try:
-                # Load workbook
-                wb = load_workbook(file_path)
+                # Load workbook (with caching for performance)
+                wb, newly_loaded = self._get_cached_workbook(file_path, use_cache=True)
                 ws = wb[sheet_name]
 
                 # Get header row
@@ -733,7 +799,9 @@ class ExcelManager(QObject):
                             continue
 
                 # Save workbook
+                self._profiler.start_operation("save_workbook")
                 wb.save(file_path)
+                self._profiler.end_operation("save_workbook")
 
                 # Update cache for the new row
                 self._hyperlink_cache[new_row - 2] = False
@@ -769,15 +837,17 @@ class ExcelManager(QObject):
                         row_data = {col: val for col, val in zip(columns, values)}
 
                 # Remove backup after successful write
-                if path.exists(backup_file):
+                if backup_file and path.exists(backup_file):
                     remove(backup_file)
                     logger.debug("Removed backup file after successful write")
 
                 logger.info(f"Successfully added new row at index {row_idx}")
+                self._profiler.end_operation("add_new_row")
                 return row_data, row_idx
 
             finally:
-                if "wb" in locals():
+                # Only close workbook if we're not caching it
+                if "wb" in locals() and wb != self._cached_workbook:
                     wb.close()
 
         except Exception as e:
@@ -786,7 +856,7 @@ class ExcelManager(QObject):
             logger.error(f"Traceback: {traceback.format_exc()}")
 
             # Try to restore from backup
-            if "backup_file" in locals() and path.exists(backup_file):
+            if "backup_file" in locals() and backup_file and path.exists(backup_file):
                 try:
                     copy2(backup_file, file_path)
                     logger.info("Restored from backup after error")
@@ -795,6 +865,7 @@ class ExcelManager(QObject):
                     if hasattr(backup_e, "__traceback__"):
                         logger.error(f"Backup restore traceback: {traceback.format_exception(type(backup_e), backup_e, backup_e.__traceback__)}")
 
+            self._profiler.end_operation("add_new_row")
             raise
 
     def remove_row(
