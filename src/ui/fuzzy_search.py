@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..utils.logger import get_logger
+from .error_dialog import show_error
 
 
 class FuzzySearchFrame(QWidget):
@@ -290,107 +291,130 @@ class FuzzySearchFrame(QWidget):
         Args:
             value: The formatted value containing the checkmark and row information
         """
-        # Find the parent ProcessingTab
-        processing_tab = self._get_processing_tab()
-        if not processing_tab:
-            logger = get_logger()
-            logger.warning("Could not find ProcessingTab parent")
+        try:
+            # Find the parent ProcessingTab
+            processing_tab = self._get_processing_tab()
+            if not processing_tab:
+                logger = get_logger()
+                logger.warning("Could not find ProcessingTab parent")
+                return
+
+            try:
+                # Parse the value to get the row index
+                _, row_idx = processing_tab._parse_filter2_value(value)
+                if row_idx < 0:
+                    logger = get_logger()
+                    logger.warning(f"Invalid row index: {row_idx}")
+                    return
+
+                # Get the configuration
+                config = processing_tab.config_manager.get_config()
+                excel_file = config.get("excel_file")
+                excel_sheet = config.get("excel_sheet")
+                filter2_column = config.get("filter2_column")
+
+                if not all([excel_file, excel_sheet, filter2_column]):
+                    logger = get_logger()
+                    logger.warning("Missing required configuration")
+                    return
+
+                # Get the hyperlink from Excel
+                wb = load_workbook(excel_file, data_only=True)
+                ws = wb[excel_sheet]
+
+                # Find the column index
+                header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
+                if filter2_column not in header:
+                    logger = get_logger()
+                    logger.warning(f"Column '{filter2_column}' not found")
+                    return
+                col_idx = header[filter2_column]
+
+                # Get the cell
+                cell = ws.cell(
+                    row=row_idx + 2, column=col_idx
+                )  # +2 for header and 1-based index
+
+                if not cell.hyperlink:
+                    logger = get_logger()
+                    logger.warning(f"No hyperlink found in cell {cell.coordinate}")
+                    return
+
+                # Get the hyperlink target
+                target = cell.hyperlink.target
+                if not target:
+                    logger = get_logger()
+                    logger.warning("Empty hyperlink target")
+                    return
+
+                # Resolve the path if it's relative
+                # Fix 1: URL decode the target path to handle %20 and other encoded characters
+                target = urllib.parse.unquote(target)
+
+                if not os.path.isabs(target):
+                    target = os.path.join(os.path.dirname(excel_file), target)
+
+                # Fix 2: Normalize path separators based on the platform
+                # For Windows (when running on WSL or native Windows)
+                if target.startswith("//") or target.startswith("\\\\"):
+                    # This is a UNC path - ensure consistent formatting
+                    logger = get_logger()
+                    logger.debug(f"Normalizing UNC path: {target}")
+
+                    if os.name == "nt":  # Native Windows
+                        # Convert to Windows backslash format
+                        target = target.replace("/", "\\")
+                        # Ensure UNC prefix is correct
+                        if not target.startswith("\\\\"):
+                            target = "\\\\" + target[2:]
+                        logger.debug(f"Normalized to Windows format: {target}")
+                    else:  # WSL or Linux
+                        # Convert to forward slash format for WSL
+                        target = target.replace("\\", "/")
+                        # Ensure UNC prefix is correct
+                        if not target.startswith("//"):
+                            target = "//" + target[2:]
+                        logger.debug(f"Normalized to Unix format: {target}")
+
+                logger.debug(f"Final target path: {target}")
+
+                # Open the file using the system's default application
+                try:
+                    if platform.system() == "Windows":
+                        os.startfile(target)
+                    elif platform.system() == "Darwin":  # macOS
+                        subprocess.call(("open", target))
+                    else:  # Linux
+                        subprocess.call(("xdg-open", target))
+                except FileNotFoundError as fnf_err:
+                    logger = get_logger()
+                    logger.error(f"File not found when opening: {target}")
+                    self._show_file_not_found_error(target)
+                    return
+                except Exception as open_error:
+                    logger = get_logger()
+                    logger.error(f"Unexpected error when opening file: {open_error}")
+                    raise
+
+                logger.info(f"Opened linked file: {target}")
+
+            except Exception as e:
+                logger = get_logger()
+                logger.error(f"Error opening linked file: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+
+        except FileNotFoundError as fnf_err:
+            self._show_file_not_found_error(str(fnf_err))
             return
 
-        try:
-            # Parse the value to get the row index
-            _, row_idx = processing_tab._parse_filter2_value(value)
-            if row_idx < 0:
-                logger = get_logger()
-                logger.warning(f"Invalid row index: {row_idx}")
-                return
-
-            # Get the configuration
-            config = processing_tab.config_manager.get_config()
-            excel_file = config.get("excel_file")
-            excel_sheet = config.get("excel_sheet")
-            filter2_column = config.get("filter2_column")
-
-            if not all([excel_file, excel_sheet, filter2_column]):
-                logger = get_logger()
-                logger.warning("Missing required configuration")
-                return
-
-            # Get the hyperlink from Excel
-            wb = load_workbook(excel_file, data_only=True)
-            ws = wb[excel_sheet]
-
-            # Find the column index
-            header = {cell.value: idx for idx, cell in enumerate(ws[1], start=1)}
-            if filter2_column not in header:
-                logger = get_logger()
-                logger.warning(f"Column '{filter2_column}' not found")
-                return
-            col_idx = header[filter2_column]
-
-            # Get the cell
-            cell = ws.cell(
-                row=row_idx + 2, column=col_idx
-            )  # +2 for header and 1-based index
-
-            if not cell.hyperlink:
-                logger = get_logger()
-                logger.warning(f"No hyperlink found in cell {cell.coordinate}")
-                return
-
-            # Get the hyperlink target
-            target = cell.hyperlink.target
-            if not target:
-                logger = get_logger()
-                logger.warning("Empty hyperlink target")
-                return
-
-            # Resolve the path if it's relative
-            # Fix 1: URL decode the target path to handle %20 and other encoded characters
-            target = urllib.parse.unquote(target)
-
-            if not os.path.isabs(target):
-                target = os.path.join(os.path.dirname(excel_file), target)
-
-            # Fix 2: Normalize path separators based on the platform
-            # For Windows (when running on WSL or native Windows)
-            if target.startswith("//") or target.startswith("\\\\"):
-                # This is a UNC path - ensure consistent formatting
-                logger = get_logger()
-                logger.debug(f"Normalizing UNC path: {target}")
-
-                if os.name == "nt":  # Native Windows
-                    # Convert to Windows backslash format
-                    target = target.replace("/", "\\")
-                    # Ensure UNC prefix is correct
-                    if not target.startswith("\\\\"):
-                        target = "\\\\" + target[2:]
-                    logger.debug(f"Normalized to Windows format: {target}")
-                else:  # WSL or Linux
-                    # Convert to forward slash format for WSL
-                    target = target.replace("\\", "/")
-                    # Ensure UNC prefix is correct
-                    if not target.startswith("//"):
-                        target = "//" + target[2:]
-                    logger.debug(f"Normalized to Unix format: {target}")
-
-            logger.debug(f"Final target path: {target}")
-
-            # Open the file using the system's default application
-
-            if platform.system() == "Windows":
-                os.startfile(target)
-            elif platform.system() == "Darwin":  # macOS
-                subprocess.call(("open", target))
-            else:  # Linux
-                subprocess.call(("xdg-open", target))
-
-            logger.info(f"Opened linked file: {target}")
-
-        except Exception as e:
-            logger = get_logger()
-            logger.error(f"Error opening linked file: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
+    def _show_file_not_found_error(self, target: str) -> None:
+        """Show a file not found error dialog."""
+        show_error(
+            self,
+            "opening linked file",
+            FileNotFoundError(f"The linked file could not be found: {target}"),
+            is_modal=False
+        )
 
     def _get_processing_tab(self):
         """Get the parent ProcessingTab instance."""
