@@ -166,10 +166,30 @@ class PDFManager:
             if not pdf_files:
                 return None
 
-            # Return the first available file
-            selected_file = sorted(pdf_files)[0]
-            logger.info(f"Selected next PDF file: {selected_file}")
-            return selected_file
+            # Sort by modification time (newest first) instead of alphabetical order
+            try:
+                pdf_files_with_time = []
+                for file_path in pdf_files:
+                    try:
+                        mtime = os.path.getmtime(file_path)
+                        pdf_files_with_time.append((file_path, mtime))
+                    except OSError as e:
+                        logger.warning(f"Could not get modification time for {file_path}: {e}")
+                        # Use current time as fallback so file is still processed
+                        pdf_files_with_time.append((file_path, time.time()))
+                
+                # Sort by modification time in descending order (newest first)
+                pdf_files_with_time.sort(key=lambda x: x[1], reverse=True)
+                selected_file = pdf_files_with_time[0][0]
+                
+                logger.info(f"Selected next PDF file (newest first): {selected_file}")
+                return selected_file
+            except Exception as e:
+                logger.error(f"Error sorting PDF files by modification time: {e}")
+                # Fallback to alphabetical sorting if time-based sorting fails
+                selected_file = sorted(pdf_files)[0]
+                logger.info(f"Selected next PDF file (alphabetical fallback): {selected_file}")
+                return selected_file
 
         except Exception as e:
             logger.error(f"Error getting next PDF: {str(e)}")
