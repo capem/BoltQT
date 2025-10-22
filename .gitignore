@@ -5,7 +5,8 @@ build/
 dist/
 wheels/
 *.egg-info
-
+*.pdf
+*.xlsx
 # Virtual environments
 .venv
 .env
