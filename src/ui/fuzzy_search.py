@@ -75,9 +75,9 @@ class FuzzySearchFrame(QWidget):
         # Allow horizontal scrollbar when needed, but don't show it always
         self.listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.listbox.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        # Set fixed height to prevent excessive vertical growth and resizing
-        self.listbox.setFixedHeight(200)  # Set a fixed height for the listbox
-        layout.addWidget(self.listbox)
+        # Set a minimum height and allow vertical expansion
+        self.listbox.setMinimumHeight(75)
+        layout.addWidget(self.listbox, 1)  # Set stretch factor to 1
 
     def _setup_styles(self) -> None:
         """Configure styles for the widgets."""

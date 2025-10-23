@@ -197,20 +197,21 @@ class ProcessingTab(QWidget):
         # Filters section
         filters_frame, filters_layout = self._create_section_frame("Filters")
 
-        # Create a scroll area for the filters
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        filters_layout.addWidget(scroll)
+        # Create a splitter for the filters
+        self.filters_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.filters_splitter.setHandleWidth(2)
+        self.filters_splitter.setChildrenCollapsible(False)
+        filters_layout.addWidget(self.filters_splitter, 1)  # Allow vertical expansion
 
+        # Create a container for the filters within the splitter
         self.filters_container = QWidget()
         self.filters_layout = QVBoxLayout(self.filters_container)
         self.filters_layout.setContentsMargins(0, 0, 0, 0)
         self.filters_layout.setSpacing(6)
-        scroll.setWidget(self.filters_container)
+        self.filters_splitter.addWidget(self.filters_container)
 
-        # Create the loading overlay, parented to the filters container
-        self.loading_overlay = LoadingOverlay(self.filters_container)
+        # Create the loading overlay, parented to the filters frame
+        self.loading_overlay = LoadingOverlay(filters_frame)
 
         right_layout.addWidget(filters_frame)
 
@@ -383,12 +384,9 @@ class ProcessingTab(QWidget):
         filter_columns = config.get("filter_columns", [])
 
         # Clear existing filters
-        for i in reversed(range(self.filters_layout.count())):
-            item = self.filters_layout.itemAt(i)
-            if item.widget():
-                item.widget().setParent(None)
-            elif item.spacerItem():
-                self.filters_layout.removeItem(item)
+        for i in reversed(range(self.filters_splitter.count())):
+            widget = self.filters_splitter.widget(i)
+            widget.setParent(None)
         self.filter_frames.clear()
 
         # Create new filters
@@ -412,13 +410,12 @@ class ProcessingTab(QWidget):
             frame.setContentsMargins(0, 0, 0, 0)
             layout.setContentsMargins(1, 1, 1, 1)
             layout.setSpacing(1)
-            self.filters_layout.addWidget(frame)
+            self.filters_splitter.addWidget(frame)
             self.filter_frames.append(
                 {"frame": frame, "label": label, "fuzzy": fuzzy, "column": column}
             )
 
-        # Add stretch at the end
-        self.filters_layout.addStretch()
+
 
         # Defer filter loading until after initialization is complete
         # This prevents redundant Excel data loading during startup
