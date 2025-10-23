@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -200,25 +201,51 @@ class ConfigTab(QWidget):
     def _add_filter_section(self, parent_layout: QVBoxLayout) -> None:
         """Add the filter configuration section."""
         frame, layout = self._create_section_frame("Filter Configuration")
-
-        grid = QGridLayout()
-        grid.setColumnStretch(1, 1)
-        layout.addLayout(grid)
-
-        # Filter columns
         self.filter_combos: List[QComboBox] = []
-        for i in range(1, 5):
-            grid.addWidget(QLabel(f"Filter {i} Column:"), i - 1, 0)
-            combo = QComboBox()
-            combo.setEnabled(False)  # Disabled until sheet selected
-            self.filter_combos.append(combo)
-            grid.addWidget(combo, i - 1, 1)
+
+        # Add a spinbox to control the number of filters
+        num_filters_layout = QHBoxLayout()
+        num_filters_layout.addWidget(QLabel("Number of Filters:"))
+        self.num_filters_spinbox = QSpinBox()
+        self.num_filters_spinbox.setMinimum(1)
+        self.num_filters_spinbox.setMaximum(10)
+        self.num_filters_spinbox.valueChanged.connect(self._update_filter_widgets)
+        num_filters_layout.addWidget(self.num_filters_spinbox)
+        num_filters_layout.addStretch()
+        layout.addLayout(num_filters_layout)
+
+        # Create a container for the filter widgets
+        self.filters_container = QWidget()
+        self.filters_grid_layout = QGridLayout(self.filters_container)
+        self.filters_grid_layout.setColumnStretch(1, 1)
+        layout.addWidget(self.filters_container)
 
         parent_layout.addWidget(frame)
 
+    def _clear_filter_widgets(self) -> None:
+        """Clear all filter widgets from the layout."""
+        for i in reversed(range(self.filters_grid_layout.count())):
+            widget_to_remove = self.filters_grid_layout.itemAt(i).widget()
+            if widget_to_remove:
+                self.filters_grid_layout.removeWidget(widget_to_remove)
+                widget_to_remove.setParent(None)
+        self.filter_combos.clear()
+
+    def _update_filter_widgets(self) -> None:
+        """Dynamically create filter widgets based on the spinbox value."""
+        self._clear_filter_widgets()
+        num_filters = self.num_filters_spinbox.value()
+        for i in range(1, num_filters + 1):
+            label = QLabel(f"Filter {i} Column:")
+            combo = QComboBox()
+            combo.setEnabled(False)  # Disabled until sheet selected
+            self.filters_grid_layout.addWidget(label, i - 1, 0)
+            self.filters_grid_layout.addWidget(combo, i - 1, 1)
+            self.filter_combos.append(combo)
+        self._on_sheet_changed(self.excel_sheet_combo.currentText())
+
     def _on_sheet_changed(self, sheet_name: str) -> None:
         """Handle sheet selection change."""
-        # Clear and disable filters if no sheet selected
         if not sheet_name:
             for combo in self.filter_combos:
                 combo.clear()
@@ -226,72 +253,30 @@ class ConfigTab(QWidget):
             return
 
         try:
-            # Get current configuration to preserve filter values
             config = self.config_manager.get_config()
-            stored_filter_values = [
-                config.get(f"filter{i}_column", "")
-                for i in range(1, len(self.filter_combos) + 1)
-            ]
-
-            # Get column names from selected sheet
+            stored_filter_columns = config.get("filter_columns", [])
             logger = get_logger()
             excel_file = self.excel_file_entry.text()
             columns = self.excel_manager.get_sheet_columns(excel_file, sheet_name)
-            logger.debug(f"Sheet changed to {sheet_name}, columns: {columns}")
 
-            # Define default columns based on common names
-            default_columns = {
-                1: ["FOURNISSEURS", "FRS", "SUPPLIER"],  # Supplier column
-                2: ["FACTURES", "FA", "INVOICE"],  # Invoice column
-                3: ["DATE FACTURE", "DATE", "DATE FA"],  # Date column
-                4: ["MNT DH", "MNT", "MONTANT", "AMOUNT"],  # Amount column
-            }
-
-            # Update filter combos with stored or default values
-            for i, (combo, stored_value) in enumerate(
-                zip(self.filter_combos, stored_filter_values), 1
-            ):
+            for i, combo in enumerate(self.filter_combos):
                 combo.blockSignals(True)
                 try:
                     combo.clear()
-                    combo.addItem("")  # Empty option
+                    combo.addItem("")
                     combo.addItems(columns)
                     combo.setEnabled(True)
 
-                    # First try stored value
-                    if stored_value and stored_value in columns:
-                        logger.debug(
-                            f"Setting filter {i} to stored value: '{stored_value}'"
-                        )
-                        combo.setCurrentText(stored_value)
+                    if i < len(stored_filter_columns) and stored_filter_columns[i] in columns:
+                        combo.setCurrentText(stored_filter_columns[i])
                     else:
-                        # Try to find a matching default column
-                        default_found = False
-                        if i in default_columns:
-                            for default_col in default_columns[i]:
-                                if default_col in columns:
-                                    logger.debug(
-                                        f"Setting filter {i} to default value: '{default_col}'"
-                                    )
-                                    combo.setCurrentText(default_col)
-                                    default_found = True
-                                    break
-
-                        if not default_found:
-                            logger.debug(f"No matching value found for filter {i}")
-                            combo.setCurrentIndex(0)
+                        combo.setCurrentIndex(0)
                 finally:
                     combo.blockSignals(False)
-
-            # Save configuration after setting defaults
-            self._save_config()
-
         except Exception as e:
             logger = get_logger()
             logger.error(f"Error in sheet change: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
             self._handle_error(e, "loading sheet columns")
-            # Disable filters on error
             for combo in self.filter_combos:
                 combo.clear()
                 combo.setEnabled(False)
@@ -513,23 +498,11 @@ class ConfigTab(QWidget):
 
         # Field mappings
         preset_vision_layout.addWidget(QLabel("Field Mappings:"))
-        mappings_frame = QFrame()
-        mappings_layout = QGridLayout(mappings_frame)
-        mappings_layout.setColumnStretch(1, 1)
-
-        # Create field mapping entries
+        self.mappings_frame = QFrame()
+        self.mappings_layout = QGridLayout(self.mappings_frame)
+        self.mappings_layout.setColumnStretch(1, 1)
         self.vision_field_mappings = []
-        for i in range(4):
-            field_label = QLabel(f"Filter {i + 1}:")
-            field_entry = QLineEdit()
-            field_entry.setPlaceholderText(f"Field name mapped to filter{i + 1}")
-
-            mappings_layout.addWidget(field_label, i, 0)
-            mappings_layout.addWidget(field_entry, i, 1)
-
-            self.vision_field_mappings.append(field_entry)
-
-        preset_vision_layout.addWidget(mappings_frame)
+        preset_vision_layout.addWidget(self.mappings_frame)
 
         # Add preset vision frame to the main layout
         layout.addWidget(preset_vision_frame)
@@ -552,90 +525,68 @@ class ConfigTab(QWidget):
             entry.setText(folder)
             self._save_config()
 
+    def _update_vision_mappings_ui(self, num_filters: int) -> None:
+        """Dynamically update the vision field mapping widgets."""
+        # Clear existing widgets
+        for i in reversed(range(self.mappings_layout.count())):
+            widget_to_remove = self.mappings_layout.itemAt(i).widget()
+            if widget_to_remove:
+                self.mappings_layout.removeWidget(widget_to_remove)
+                widget_to_remove.setParent(None)
+        self.vision_field_mappings.clear()
+
+        # Create new widgets
+        for i in range(num_filters):
+            field_label = QLabel(f"Filter {i + 1}:")
+            field_entry = QLineEdit()
+            field_entry.setPlaceholderText(f"Field name mapped to filter{i + 1}")
+            self.mappings_layout.addWidget(field_label, i, 0)
+            self.mappings_layout.addWidget(field_entry, i, 1)
+            self.vision_field_mappings.append(field_entry)
+
     def _load_config(self) -> None:
         """Load configuration into UI elements."""
         try:
-            # Get current config
             config = self.config_manager.get_config()
-
-            # Update entry fields
             self.source_folder_entry.setText(config.get("source_folder", ""))
             self.processed_folder_entry.setText(config.get("processed_folder", ""))
             self.skip_folder_entry.setText(config.get("skip_folder", ""))
-
-            # Set excel file
             excel_path = config.get("excel_file", "")
             self.excel_file_entry.setText(excel_path)
+            
+            num_filters = config.get("num_filters", 1)
+            self.num_filters_spinbox.setValue(num_filters)
+            self._update_filter_widgets()
+            self._update_vision_mappings_ui(num_filters)
 
-            # Block signals to avoid triggering unnecessary updates
             self.excel_sheet_combo.blockSignals(True)
             self.excel_sheet_combo.clear()
-
-            # Add sheet names
             sheet_names = self.excel_manager.get_available_sheets(excel_path)
             self.excel_sheet_combo.addItems(sheet_names)
-
-            # Set selected sheet
             curr_sheet = config.get("excel_sheet", "")
             self.excel_sheet_combo.setCurrentText(curr_sheet)
-
             self.excel_sheet_combo.blockSignals(False)
 
-            columns = self.excel_manager.get_sheet_columns(excel_path, curr_sheet)
-            logger = get_logger()
-            logger.debug(f"Loaded columns: {columns}")
+            self._on_sheet_changed(curr_sheet)
 
-            # Update filter combos with columns and set values
-            for i, combo in enumerate(self.filter_combos, 1):
-                combo.blockSignals(True)
-                try:
-                    combo.clear()
-                    combo.addItem("")  # Empty option first
-                    combo.addItems(columns)
-                    combo.setEnabled(True)
-
-                    # Try to set stored value first
-                    stored_value = config.get(f"filter{i}_column", "")
-                    logger.debug(f"Filter {i} stored value: {stored_value}")
-
-                    logger.debug(
-                        f"Setting filter {i} to stored value: '{stored_value}'"
-                    )
-                    combo.setCurrentText(stored_value)
-
-                finally:
-                    combo.blockSignals(False)
-
-            # Set template
             self.output_template_entry.setText(config.get("output_template", ""))
-
-            # Load vision settings
             vision_config = config.get("vision", {})
             self.vision_enabled_checkbox.setChecked(vision_config.get("enabled", False))
             self.vision_api_key_entry.setText(vision_config.get("gemini_api_key", ""))
-
-            # Set model if available
             model = vision_config.get("model", "")
             if model and self.vision_model_combo.findText(model) != -1:
                 self.vision_model_combo.setCurrentText(model)
-
-            # Document type
             self.document_type_entry.setText(config.get("document_type", ""))
-
-            # Load prompt and field mappings
             self.vision_prompt_text.setPlainText(config.get("prompt", ""))
-
-            # Update field mappings
+            
             field_mappings = config.get("field_mappings", {})
             for i, entry in enumerate(self.vision_field_mappings):
                 filter_key = f"filter{i + 1}"
-                # Find mapping that points to this filter
                 mapping_value = ""
                 for field, target in field_mappings.items():
                     if target == filter_key:
                         mapping_value = field
                         break
-
                 entry.setText(mapping_value)
 
         except Exception as e:
@@ -764,10 +715,8 @@ class ConfigTab(QWidget):
             logger.debug(f"Collected basic config values: {config}")
 
             # Add filter columns
-            for i, combo in enumerate(self.filter_combos, 1):
-                filter_value = combo.currentText()
-                config[f"filter{i}_column"] = filter_value
-                logger.debug(f"Filter {i} column: {filter_value}")
+            config["num_filters"] = self.num_filters_spinbox.value()
+            config["filter_columns"] = [combo.currentText() for combo in self.filter_combos]
 
             # Get prompt text
             config["prompt"] = self.vision_prompt_text.toPlainText()

@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -196,11 +197,17 @@ class ProcessingTab(QWidget):
         # Filters section
         filters_frame, filters_layout = self._create_section_frame("Filters")
 
+        # Create a scroll area for the filters
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        filters_layout.addWidget(scroll)
+
         self.filters_container = QWidget()
         self.filters_layout = QVBoxLayout(self.filters_container)
-        self.filters_layout.setContentsMargins(0, 0, 0, 0)  # Remove container margins
-        self.filters_layout.setSpacing(6)  # Further reduce spacing between filters
-        filters_layout.addWidget(self.filters_container)
+        self.filters_layout.setContentsMargins(0, 0, 0, 0)
+        self.filters_layout.setSpacing(6)
+        scroll.setWidget(self.filters_container)
 
         # Create the loading overlay, parented to the filters container
         self.loading_overlay = LoadingOverlay(self.filters_container)
@@ -285,9 +292,6 @@ class ProcessingTab(QWidget):
 
         # Add actions frame with minimal margin
         right_layout.addWidget(actions_frame)
-
-        # Use large stretch factor to push filters section to take more space
-        right_layout.addStretch(10)
 
         # Center panel (PDF Viewer)
         center_panel = QWidget()
@@ -375,84 +379,43 @@ class ProcessingTab(QWidget):
     def _setup_filters(self) -> None:
         """Setup filter controls based on configuration."""
         config = self.config_manager.get_config()
+        num_filters = config.get("num_filters", 0)
+        filter_columns = config.get("filter_columns", [])
 
-        # First, remove the stretch at the end if it exists
-        # This prevents duplicate stretches when rebuilding filters
-        for i in range(self.filters_layout.count()):
+        # Clear existing filters
+        for i in reversed(range(self.filters_layout.count())):
             item = self.filters_layout.itemAt(i)
-            if item and item.spacerItem():
-                # Found a stretch item, remove it
+            if item.widget():
+                item.widget().setParent(None)
+            elif item.spacerItem():
                 self.filters_layout.removeItem(item)
-                break
-
-        # Clear existing filters - ensure proper cleanup
-        for frame in self.filter_frames:
-            # Remove from layout first
-            self.filters_layout.removeWidget(frame["frame"])
-            # Then delete the widget
-            frame["frame"].setParent(None)
-            frame["frame"].deleteLater()
         self.filter_frames.clear()
 
-        # Process events to ensure widgets are properly removed
-        QApplication.processEvents()
-
         # Create new filters
-        i = 1
-        while True:
-            filter_key = f"filter{i}_column"
-            if filter_key not in config:
-                break
-
-            column = config[filter_key]
-
-            # Create frame and layout
+        for i in range(num_filters):
+            column = filter_columns[i] if i < len(filter_columns) else f"Filter {i+1}"
             frame, layout = self._create_section_frame("")
-
-            # Add label
             label = QLabel(column)
-            label.setStyleSheet(
-                "font-weight: bold; font-size: 9pt; margin: 0; padding: 0;"
-            )
-            label.setFixedHeight(16)  # Reduce label height
+            label.setStyleSheet("font-weight: bold; font-size: 9pt; margin: 0; padding: 0;")
+            label.setFixedHeight(16)
             layout.addWidget(label)
 
-            # Create fuzzy search
             fuzzy = FuzzySearchFrame(
-                identifier=f"processing_filter{i}",
-                on_tab=lambda e, idx=i - 1: self._handle_filter_tab(e, idx),
+                identifier=f"processing_filter{i+1}",
+                on_tab=lambda e, idx=i: self._handle_filter_tab(e, idx),
             )
-            # Connect value_selected signal to update dependent filters
-            fuzzy.value_selected.connect(
-                lambda idx=i - 1: self._on_filter_selected(idx)
-            )
-            # Connect text_changed signal to update process button state
+            fuzzy.value_selected.connect(lambda idx=i: self._on_filter_selected(idx))
             fuzzy.text_changed.connect(self._update_process_button)
-
-            # Set tighter layout for fuzzy search frame
-            fuzzy.setContentsMargins(0, 0, 0, 0)  # Remove all margins
-
-            # Allow the fuzzy search frame to expand to fill available space
-            fuzzy.setSizePolicy(
-                self.sizePolicy().horizontalPolicy(), self.sizePolicy().verticalPolicy()
-            )
-
+            fuzzy.setContentsMargins(0, 0, 0, 0)
             layout.addWidget(fuzzy)
 
-            # Set ultra-compact margins for the filter frame
-            frame.setContentsMargins(0, 0, 0, 0)  # Remove all margins
-            layout.setContentsMargins(1, 1, 1, 1)  # Minimal margins
-            layout.setSpacing(1)  # Minimal spacing within filter
-
-            # Add to main layout
+            frame.setContentsMargins(0, 0, 0, 0)
+            layout.setContentsMargins(1, 1, 1, 1)
+            layout.setSpacing(1)
             self.filters_layout.addWidget(frame)
-
-            # Store filter info
             self.filter_frames.append(
                 {"frame": frame, "label": label, "fuzzy": fuzzy, "column": column}
             )
-
-            i += 1
 
         # Add stretch at the end
         self.filters_layout.addStretch()
@@ -532,242 +495,63 @@ class ProcessingTab(QWidget):
         """Load values for a specific filter."""
         try:
             config = self.config_manager.get_config()
-            if not (config["excel_file"] and config["excel_sheet"]):
+            if not (config.get("excel_file") and config.get("excel_sheet")):
                 return
 
-            # In vision mode, we still need to load filter values for fuzzy search functionality
-            # The FuzzySearchFrame.set_values method will preserve the current value
             logger = get_logger()
-            if self._vision_mode and filter_index > 0:
-                logger.debug(
-                    f"Loading filter values for filter {filter_index + 1} in vision mode (for fuzzy search)"
-                )
-
-            # Load Excel data if needed (only if not already loaded)
             if self.excel_manager.excel_data is None:
                 try:
-                    logger = get_logger()
-                    logger.debug("Excel data not loaded, loading for filter values...")
-                    self.excel_manager.load_excel_data(
-                        config["excel_file"], config["excel_sheet"]
-                    )
-                except OSError as e:
-                    # Handle file access error gracefully
-                    logger = get_logger()
-                    logger.error(f"Excel file access error: {str(e)}")
-                    self._show_warning(
-                        f"Could not access Excel file: {config['excel_file']}\n"
-                        f"Error: {str(e)}\n"
-                        f"Filters will not be populated."
-                    )
-                    # Set empty values for all filters
-                    for i in range(len(self.filter_frames)):
-                        self.filter_frames[i]["fuzzy"].set_values([])
-                    return
+                    self.excel_manager.load_excel_data(config["excel_file"], config["excel_sheet"])
                 except Exception as e:
-                    # Handle other Excel loading errors
-                    logger = get_logger()
-                    logger.error(f"Excel loading error: {str(e)}")
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                    self._show_warning(
-                        f"Error loading Excel data from {config['excel_file']}:\n"
-                        f"{str(e)}\n"
-                        f"Filters will not be populated."
-                    )
-                    # Set empty values for all filters
-                    for i in range(len(self.filter_frames)):
-                        self.filter_frames[i]["fuzzy"].set_values([])
+                    self._show_warning(f"Could not access Excel file: {config['excel_file']}\nError: {str(e)}")
+                    for frame in self.filter_frames:
+                        frame["fuzzy"].set_values([])
                     return
-            else:
-                logger = get_logger()
-                logger.debug("Excel data already loaded, using cached data for filters")
 
-            # If we have no filters, exit
             if not self.filter_frames or filter_index >= len(self.filter_frames):
                 return
 
-            # Get the dataframe
             df = self.excel_manager.excel_data
-
-            # Track row_idx from filter2 if we have it
+            filtered_df = df.copy()
             row_idx = -1
 
-            # Apply filters for all previous filters
-            filtered_df = df.copy()
             for i in range(filter_index):
-                # Skip if we don't have a value for this filter
                 selected_value = self.filter_frames[i]["fuzzy"].get()
                 if not selected_value:
                     continue
 
-                # If this is filter2, parse it to get the clean value and row_idx
-                if i == 1:
-                    clean_value, parsed_row_idx = self._parse_filter2_value(
-                        selected_value
-                    )
+                column = self.filter_frames[i]["column"]
+                if i == 1: # Special handling for filter 2
+                    clean_value, parsed_row_idx = self._parse_filter2_value(selected_value)
                     selected_value = clean_value
                     row_idx = parsed_row_idx
-                    logger = get_logger()
-                    logger.debug(
-                        f"Parsed filter2: value='{clean_value}', row_idx={row_idx}"
-                    )
-                # For filter3 and beyond, check row_idx
-                if i > 1:
-                    # Clear and return if no valid row_idx from filter2 (unless in vision mode)
-                    if row_idx < 0 or row_idx not in filtered_df.index:
-                        logger = get_logger()
-                        if self._vision_mode:
-                            logger.debug(
-                                f"Invalid row_idx {row_idx} for filter {i + 1}, but continuing in vision mode"
-                            )
-                        else:
-                            logger.debug(
-                                f"No valid row_idx for filter {i + 1}, clearing all subsequent filters"
-                            )
-                            for idx in range(i, len(self.filter_frames)):
-                                self.filter_frames[idx]["fuzzy"].clear()
-                            return
-                    else:
+
+                if row_idx != -1 and i >= 1:
+                    if row_idx in filtered_df.index:
                         filtered_df = filtered_df.loc[[row_idx]]
-                        logger.debug(f"Applied row_idx filter: {row_idx}")
-                        break
+                    else:
+                        for j in range(i + 1, len(self.filter_frames)):
+                            self.filter_frames[j]["fuzzy"].clear()
+                        return
                 else:
-                    # Apply standard column filter for filter1 and filter2
-                    column = self.filter_frames[i]["column"]
-                    filtered_df = filtered_df[
-                        filtered_df[column].astype(str) == selected_value
-                    ]
+                    filtered_df = filtered_df[filtered_df[column].astype(str) == selected_value]
 
-            # Get values for the current filter
             column = self.filter_frames[filter_index]["column"]
-
-            # Special handling for filter2 - show ALL rows, not just unique values
+            values = []
             if filter_index == 1:
-                # Hyperlinks are now pre-cached at startup or on config change.
-                # No need to call cache_hyperlinks_for_column here anymore.
-
-                # Get all rows from filtered_df, not just unique values
                 formatted_values = []
-
-                # Process each row individually
                 for idx, row in filtered_df.iterrows():
                     value = str(row[column]).strip()
-                    # Format using the updated method which checks the cache
-                    formatted_value = self._format_filter2_value(value, idx)
-                    formatted_values.append(formatted_value)
-
-                # Sort the formatted values for better user experience
-                formatted_values.sort()
-                values = formatted_values
+                    formatted_values.append(self._format_filter2_value(value, idx))
+                values = sorted(formatted_values)
             else:
-                # For filter3 and beyond, must have valid row_idx from filter2 (unless in vision mode)
-                if filter_index > 1:
-                    filter2_value = self.filter_frames[1]["fuzzy"].get()
-                    logger = get_logger()
-                    if not filter2_value:
-                        logger.debug(
-                            "No filter2 value selected, keeping subsequent filters empty"
-                        )
-                        return
-
-                    _, row_idx = self._parse_filter2_value(filter2_value)
-                    if row_idx < 0 or row_idx not in filtered_df.index:
-                        if self._vision_mode:
-                            logger.debug(
-                                f"Invalid row_idx from filter2, but continuing in vision mode for filter {filter_index + 1}"
-                            )
-                        else:
-                            logger.debug(
-                                f"No valid row_idx from filter2, keeping filter {filter_index + 1} empty"
-                            )
-                            return
-
-                    # Use only the specific row for valid row_idx
-                    if row_idx >= 0 and row_idx in filtered_df.index:
-                        filtered_df = filtered_df.loc[[row_idx]]
-                        logger.debug(
-                            f"Using row_idx {row_idx} for filter {filter_index + 1}"
-                        )
-
-                # Get unique values from filtered data
                 values = sorted(filtered_df[column].astype(str).unique().tolist())
 
-            # Update the fuzzy search values
             values = [str(x).strip() for x in values]
-
-            # Format date values to dd/mm/yyyy format only if the column name contains "DATE"
-            column_name = self.filter_frames[filter_index]["column"]
-            logger = get_logger()
-            logger.debug(
-                f"Column name check: '{column_name}', contains 'DATE': {'DATE' in column_name.upper()}"
-            )
-
-            if "DATE" in column_name.upper():
-                logger.debug(f"Formatting dates for column: {column_name}")
-                formatted_values = []
-                for value in values:
-                    original_value = value
-                    try:
-                        # Check if the value could be parsed as a date
-                        if "/" in value or "-" in value or "." in value:
-                            formatted = False
-                            # Try different date formats
-                            for fmt in [
-                                "%Y-%m-%d %H:%M:%S",  # For datetime with seconds: 2023-09-20 00:00:00
-                                "%Y-%m-%d %H:%M",  # For datetime without seconds
-                                "%Y/%m/%d %H:%M:%S",  # Other separators with time
-                                "%Y/%m/%d %H:%M",
-                                "%Y-%m-%d",  # Standard date formats
-                                "%Y/%m/%d",
-                                "%Y.%m.%d",
-                                "%m/%d/%Y",
-                                "%m-%d-%Y",
-                                "%m.%d.%Y",
-                                "%d/%m/%Y",
-                                "%d-%m-%Y",
-                                "%d.%m.%Y",
-                            ]:
-                                try:
-                                    date_obj = datetime.strptime(value, fmt)
-                                    # Format to dd/mm/yyyy
-                                    new_value = date_obj.strftime("%d/%m/%Y")
-                                    logger.debug(
-                                        f"Date converted: '{value}' using format '{fmt}' -> '{new_value}'"
-                                    )
-                                    value = new_value
-                                    formatted = True
-                                    break
-                                except ValueError:
-                                    continue
-
-                            if not formatted:
-                                logger.debug(f"Could not parse date: '{value}'")
-                    except Exception as e:
-                        logger.error(f"Error parsing date '{value}': {str(e)}")
-                        logger.error(f"Traceback: {traceback.format_exc()}")
-                        # If any error occurs during date parsing, keep the original value
-                        pass
-
-                    if original_value != value:
-                        logger.debug(
-                            f"Date formatting changed: '{original_value}' -> '{value}'"
-                        )
-
-                    formatted_values.append(value)
-
-                logger.debug(f"Setting {len(formatted_values)} formatted date values")
-                self.filter_frames[filter_index]["fuzzy"].set_values(formatted_values)
-            else:
-                # For non-date columns, use values as is
-                logger.debug(
-                    f"Using {len(values)} unformatted values for non-date column: {column_name}"
-                )
-                self.filter_frames[filter_index]["fuzzy"].set_values(values)
+            self.filter_frames[filter_index]["fuzzy"].set_values(values)
 
         except Exception as e:
-            self._handle_error(
-                e, f"loading filter values for filter {filter_index + 1}"
-            )
+            self._handle_error(e, f"loading filter values for filter {filter_index + 1}")
 
     def _on_filter_selected(self, filter_index: int) -> None:
         """Handle selection in a filter."""

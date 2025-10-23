@@ -161,10 +161,31 @@ class VisionParserService:
         self._fuzzy_matcher = FuzzyMatcher(config_manager)
 
         # Load suppliers for fuzzy matching
-        suppliers_column = config_manager.get_config().get(
-            "filter1_column", "FOURNISSEURS"
-        )
-        self._fuzzy_matcher.load_entries_from_excel("supplier", suppliers_column)
+        config = config_manager.get_config()
+        field_mappings = config.get("field_mappings", {})
+        filter_columns = config.get("filter_columns", [])
+
+        supplier_column_name = "FOURNISSEUR"  # Default
+
+        # Find which filter is mapped to 'supplier_name'
+        supplier_filter_key = None
+        for field, filter_key in field_mappings.items():
+            if field == "supplier_name":
+                supplier_filter_key = filter_key
+                break
+
+        if supplier_filter_key:
+            try:
+                # e.g., "filter1" -> 0
+                filter_index = int(supplier_filter_key.replace("filter", "")) - 1
+                if 0 <= filter_index < len(filter_columns):
+                    supplier_column_name = filter_columns[filter_index]
+            except (ValueError, IndexError):
+                get_logger().warning(
+                    f"Could not determine supplier column from mapping: {supplier_filter_key}"
+                )
+
+        self._fuzzy_matcher.load_entries_from_excel("supplier", supplier_column_name)
 
     def _init_gemini_client(self) -> None:
         """Initialize the Gemini API client."""
@@ -312,65 +333,33 @@ class VisionParserService:
             Dict with normalized field names matching filters
         """
         normalized_data = {}
+        logger = get_logger()
 
-        # Get config for supplier match threshold
         config = self.config_manager.get_config()
         vision_config = config.get("vision", {})
         supplier_match_threshold = vision_config.get("supplier_match_threshold", 0.75)
 
-        # Map each extracted field to its corresponding filter
         for extracted_field, filter_field in field_mappings.items():
             if extracted_field in extracted_data:
-                # Special handling for supplier name when it's mapped to filter1
-                if (
-                    extracted_field == "supplier_name"
-                    and filter_field == "filter1"
-                    and supplier_validation
-                ):
+                value = extracted_data[extracted_field]
+
+                # Special handling for supplier name
+                if extracted_field == "supplier_name" and supplier_validation:
                     if (
                         supplier_validation.get("match_found", False)
                         and supplier_validation.get("confidence", 0)
                         >= supplier_match_threshold
                     ):
-                        # Use the fuzzy matched value
-                        logger = get_logger()
+                        value = supplier_validation["best_match"]
                         logger.debug(
-                            f"Using fuzzy matched supplier name: '{supplier_validation['best_match']}' "
-                            f"instead of '{extracted_data[extracted_field]}' (confidence: {supplier_validation['confidence']})"
+                            f"Using fuzzy matched supplier name for {filter_field}: '{value}'"
                         )
-                        normalized_data[filter_field] = supplier_validation[
-                            "best_match"
-                        ]
                     else:
-                        # Use original value
-                        logger = get_logger()
-                        normalized_data[filter_field] = extracted_data[extracted_field]
                         logger.debug(
-                            f"Using original supplier name: '{extracted_data[extracted_field]}' "
-                            f"(no match or below threshold {supplier_match_threshold})"
+                            f"Using original supplier name for {filter_field}: '{value}'"
                         )
-                else:
-                    # Standard mapping for non-supplier fields
-                    normalized_data[filter_field] = extracted_data[extracted_field]
 
-        # Always include standard fields for backward compatibility
-        if "supplier_name" in extracted_data and "filter1" not in normalized_data:
-            # Similar special handling for the default case
-            logger = get_logger()
-            if (
-                supplier_validation
-                and supplier_validation.get("match_found", False)
-                and supplier_validation.get("confidence", 0) >= supplier_match_threshold
-            ):
-                normalized_data["filter1"] = supplier_validation["best_match"]
-                logger.debug(
-                    f"Using fuzzy matched supplier name (default): '{supplier_validation['best_match']}'"
-                )
-            else:
-                normalized_data["filter1"] = extracted_data["supplier_name"]
-                logger.debug(
-                    f"Using original supplier name (default): '{extracted_data['supplier_name']}'"
-                )
+                normalized_data[filter_field] = value
 
         return normalized_data
 

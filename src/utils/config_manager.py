@@ -27,12 +27,10 @@ class ConfigManager(QObject):
             "excel_file": "",
             "excel_sheet": "",
             "processed_folder": "",
-            "skip_folder": "",  # New: folder for skipped files
+            "skip_folder": "",
             "output_template": "",
-            "filter1_column": "",
-            "filter2_column": "",
-            "filter3_column": "",
-            "filter4_column": "",
+            "num_filters": 4,
+            "filter_columns": ["", "", "", ""],
             "prompt": "",
             "field_mappings": {},
             "vision": {
@@ -112,8 +110,21 @@ class ConfigManager(QObject):
             if hasattr(e, "__traceback__"):
                 logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
 
+    def _migrate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Migrate old config format to the new one."""
+        if "filter1_column" in config:
+            filter_columns = []
+            i = 1
+            while f"filter{i}_column" in config:
+                filter_columns.append(config.pop(f"filter{i}_column"))
+                i += 1
+            config["num_filters"] = len(filter_columns)
+            config["filter_columns"] = filter_columns
+        return config
+
     def _merge_with_template(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Merge loaded config with template to ensure all keys exist."""
+        """Merge loaded config with template and migrate if necessary."""
+        config = self._migrate_config(config)
         result = self._config_template.copy()
 
         # Top level merge
@@ -121,13 +132,20 @@ class ConfigManager(QObject):
             if key in result:
                 if isinstance(value, dict) and isinstance(result[key], dict):
                     # Deep merge for nested objects like 'vision'
-                    for subkey, subvalue in value.items():
-                        result[key][subkey] = subvalue
+                    result[key].update(value)
                 else:
                     result[key] = value
             else:
                 # Add non-template keys
                 result[key] = value
+
+        # Ensure filter_columns matches num_filters
+        num_filters = result.get("num_filters", 0)
+        filter_columns = result.get("filter_columns", [])
+        if len(filter_columns) < num_filters:
+            filter_columns.extend([""] * (num_filters - len(filter_columns)))
+        elif len(filter_columns) > num_filters:
+            result["filter_columns"] = filter_columns[:num_filters]
 
         return result
 

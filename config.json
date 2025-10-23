@@ -1,5 +1,5 @@
 {
-  "_last_used_preset": "Preset: OV LOCAL",
+  "_last_used_preset": "Preset: Factures",
   "Preset: OV LOCAL": {
     "document_type": "OV",
     "source_folder": "//192.168.0.77/tarec/Archive/SCANNER/OV LOCAL",
@@ -8,10 +8,13 @@
     "processed_folder": "//192.168.0.77/tarec/Archive/Archive 2023/OV",
     "skip_folder": "//192.168.0.77/tarec/Archive/SCANNER/OV LOCAL/SKIPPED",
     "output_template": "{processed_folder}/{filter1}/OV {filter1} {filter3}.pdf",
-    "filter1_column": "FOURNISSEUR",
-    "filter2_column": "N\u00b0 OV",
-    "filter3_column": "N\u00b0 FACTURE",
-    "filter4_column": "MONTANT ",
+    "num_filters": 4,
+    "filter_columns": [
+      "FOURNISSEUR",
+      "N\u00b0 OV",
+      "N\u00b0 FACTURE",
+      "MONTANT "
+    ],
     "prompt": "Extract the following information from this payment order:\n1. Supplier/Beneficiary Name\n2. Payment Order Number\n3. Related Invoice Numbers (semicolon-separated if multiple)\n4. Total Amount (without currency)\n\nReturn ONLY a JSON object with these fields as keys:\n{\n    \"supplier_name\": \"extracted supplier/beneficiary name\",\n    \"order_number\": \"extracted payment order number they are generally in this format 'TAREC-OV-2019-05-004'\",\n    \"related_invoices\": \"extracted invoice references, generally specified after 'Motif:'\",\n    \"total_amount\": \"extracted amount without currency\"\n    }\n\nIf any field is not found in the image, set its value to null.",
     "field_mappings": {
       "supplier_name": "filter1",
@@ -35,10 +38,13 @@
     "excel_file": "C:/Users/saada/Documents/Tarec/BoltQT/tests/data/SUIVI OV CHQ OPCVM BC 2023 test.xlsx",
     "excel_sheet": "BON DE COMMANDE",
     "output_template": "{processed_folder}/{filter3|date.year}/MOIS {filter3|date.month}/{filter2|str.slice:0:2} {filter1}{filter2|str.slice:2:}.pdf",
-    "filter1_column": "FOURNISSEUR",
-    "filter2_column": "N\u00b0 BC",
-    "filter3_column": "DATE BC",
-    "filter4_column": "MONTANT",
+    "num_filters": 4,
+    "filter_columns": [
+      "FOURNISSEUR",
+      "N\u00b0 BC",
+      "DATE BC",
+      "MONTANT"
+    ],
     "prompt": "Extract the following information from this purchase order:\n1. Supplier/Vendor Name\n2. Purchase Order Number\n3. Purchase Order Date (in format DD/MM/YYYY)\n4. Total Amount (without currency)\n\nReturn ONLY a JSON object with these fields as keys:\n{\n    \"supplier_name\": \"extracted supplier name\",\n    \"order_number\": \"extracted purchase order number, generally in this format 'BC 25-01-0010'\",\n    \"order_date\": \"extracted date in DD/MM/YYYY format\",\n    \"total_amount\": \"extracted amount with currency 'Montant TTC'\"\n    }\n\nIf any field is not found in the image, set its value to null.",
     "field_mappings": {
       "supplier_name": "filter1",
@@ -63,10 +69,13 @@
     "processed_folder": "//192.168.0.77/tarec/Archive/Archive 2023/FACTURE RECU",
     "skip_folder": "//192.168.0.77/tarec/Archive/SCANNER/FACTURE RECUES/SKIPPED",
     "output_template": "{processed_folder}/{filter3|date.year}/MOIS {filter3|date.month}/{filter2|str.first_word} {filter1} {filter2|str.split_no_last}.pdf",
-    "filter1_column": "FOURNISSEUR",
-    "filter2_column": "N\u00b0 FACTURE",
-    "filter3_column": "DATE FACTURE",
-    "filter4_column": "MONTANT",
+    "num_filters": 4,
+    "filter_columns": [
+      "FOURNISSEUR",
+      "N\u00b0 FACTURE",
+      "DATE FACTURE",
+      "MONTANT"
+    ],
     "prompt": "Extract the following information from this scanned invoice:\n1. Supplier/Vendor Name\n2. Invoice Number\n3. Invoice Date (in format DD/MM/YYYY)\n4. Total Amount (without currency)\n\nReturn ONLY a JSON object with these fields as keys:\n{\n    \"supplier_name\": \"extracted supplier name\",\n    \"invoice_number\": \"extracted invoice number\",\n    \"invoice_date\": \"extracted date in DD/MM/YYYY format\",\n    \"total_amount\": \"extracted amount without currency\"\n}\n\nIf any field is not found in the image, set its value to null.",
     "field_mappings": {
       "supplier_name": "filter1",
