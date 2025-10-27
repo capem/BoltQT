@@ -245,14 +245,22 @@ class ProcessingThread(QThread):
     def _get_filter_columns(
         self, config: Dict[str, Any], filter_values: List[str]
     ) -> List[str]:
-        """Get filter columns based on filter values."""
-        filter_columns = []
-        for i in range(1, len(filter_values) + 1):
-            column_key = f"filter{i}_column"
-            if column_key not in config:
-                raise Exception(f"Missing filter column configuration for filter {i}")
-            filter_columns.append(config[column_key])
-        return filter_columns
+        """Get filter columns from the configuration."""
+        if "filter_columns" not in config or not isinstance(
+            config["filter_columns"], list
+        ):
+            raise Exception("Missing or invalid 'filter_columns' in configuration.")
+
+        num_filters = len(filter_values)
+        config_columns = config["filter_columns"]
+
+        if len(config_columns) < num_filters:
+            raise Exception(
+                f"Configuration provides {len(config_columns)} filter columns, "
+                f"but {num_filters} filter values were given."
+            )
+
+        return config_columns[:num_filters]
 
     def _create_new_row(
         self, filter_columns: List[str], filter_values: List[str], task: Optional[PDFTask] = None

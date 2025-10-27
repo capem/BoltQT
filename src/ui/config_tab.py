@@ -464,7 +464,7 @@ class ConfigTab(QWidget):
         grid.addWidget(QLabel("Model:"), 3, 0)
         self.vision_model_combo = QComboBox()
         self.vision_model_combo.addItems(
-            ["gemini-2.0-flash", "gemini-2.5-pro-exp-03-25"]
+            ["gemini-2.5-flash", "gemini-2.5-pro"]
         )
         grid.addWidget(self.vision_model_combo, 3, 1)
 
