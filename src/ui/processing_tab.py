@@ -5,6 +5,7 @@ import os
 import re
 import time
 import traceback
+import pandas as pd
 from datetime import datetime
 from threading import Thread
 from typing import Any, Callable, Optional
@@ -542,7 +543,21 @@ class ProcessingTab(QWidget):
                     formatted_values.append(self._format_filter2_value(value, idx))
                 values = sorted(formatted_values)
             else:
-                values = sorted(filtered_df[column].astype(str).unique().tolist())
+                raw_values = filtered_df[column].dropna().unique()
+                if "DATE" in column.upper():
+                    processed_values = []
+                    for val in raw_values:
+                        try:
+                            # This handles both existing datetime objects and various string formats
+                            processed_values.append(pd.to_datetime(val, dayfirst=True).strftime('%d/%m/%Y'))
+                        except (ValueError, TypeError):
+                            # If conversion fails, use the string value as is
+                            processed_values.append(str(val))
+                    # Get unique values after formatting
+                    values = sorted(list(set(processed_values)))
+                else:
+                    # Original behavior for non-date columns
+                    values = sorted([str(v) for v in raw_values])
 
             values = [str(x).strip() for x in values]
             self.filter_frames[filter_index]["fuzzy"].set_values(values)

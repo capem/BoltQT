@@ -151,13 +151,13 @@ class ExcelManager(QObject):
             # Load the data
             try:
                 self.excel_data = pd.read_excel(
-                    normalized_path, sheet_name=sheet_name, engine="openpyxl"
+                    normalized_path, sheet_name=sheet_name, engine="openpyxl", dtype=str
                 )
             except OSError:
                 logger.debug("Failed to read with normalized path, trying original path")
                 # If normalized path fails, try the original path
                 self.excel_data = pd.read_excel(
-                    file_path, sheet_name=sheet_name, engine="openpyxl"
+                    file_path, sheet_name=sheet_name, engine="openpyxl", dtype=str
                 )
 
             # Update last loaded file info
@@ -619,9 +619,27 @@ class ExcelManager(QObject):
                     
                     # Only update if the value is different or empty
                     if current_value != val:
-                        cell.value = val
+                        # Re-use logic from add_new_row to handle data types and styling
+                        if "DATE" in col.upper() and val:
+                            try:
+                                date_val = pd.to_datetime(val, dayfirst=True).to_pydatetime()
+                                cell.value = date_val
+                                cell.number_format = "DD/MM/YYYY"
+                            except (ValueError, TypeError):
+                                cell.value = val  # Fallback
+                        elif "MNT" in col.upper() or "MONTANT" in col.upper():
+                            try:
+                                num_str = str(val).replace(" ", "").replace(",", ".")
+                                num_val = float(num_str)
+                                cell.value = num_val
+                                cell.number_format = '_-* #,##0.00\\ _€_-;\\-* #,##0.00\\ _€_-;_-* "-"??\\ _€_-;_-@_-'
+                            except (ValueError, TypeError):
+                                cell.value = val  # Fallback
+                        else:
+                            cell.value = val
+                        
                         updated_columns.append(col)
-                        logger.debug(f"Updated column '{col}': '{current_value}' -> '{val}'")
+                        logger.debug(f"Updated column '{col}': '{current_value}' -> '{cell.value}'")
                     else:
                         logger.debug(f"No change needed for column '{col}': '{current_value}'")
 
@@ -809,36 +827,8 @@ class ExcelManager(QObject):
 
                     # Convert value based on the column type
                     if "DATE" in col.upper() and val:
-                        try:
-                            # Try to parse date in various formats
-                            date_formats = [
-                                "%d/%m/%Y",
-                                "%d-%m-%Y",
-                                "%Y-%m-%d",
-                                "%Y/%m/%d",
-                            ]
-                            date_val = None
-
-                            for fmt in date_formats:
-                                try:
-                                    date_val = datetime.strptime(val, fmt)
-                                    break
-                                except ValueError:
-                                    continue
-
-                            if date_val:
-                                new_cell.value = date_val
-                                new_cell.number_format = "DD/MM/YYYY"
-                            else:
-                                # Fallback to pandas datetime parsing
-                                date_val = pd.to_datetime(val)
-                                new_cell.value = date_val.to_pydatetime()
-                                new_cell.number_format = "DD/MM/YYYY"
-                        except Exception as e:
-                            logger.warning(
-                                f"Could not parse date '{val}' for column '{col}': {str(e)}"
-                            )
-                            new_cell.value = val
+                        new_cell.value = val
+                        new_cell.number_format = "DD/MM/YYYY"
                     elif "MNT" in col.upper() or "MONTANT" in col.upper():
                         try:
                             # Handle number format
