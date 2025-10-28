@@ -196,6 +196,27 @@ class ConfigTab(QWidget):
         self.excel_sheet_combo.setEnabled(False)  # Disabled until file selected
         grid.addWidget(self.excel_sheet_combo, 1, 1)
 
+        # Hyperlink mode configuration
+        hyperlink_layout = QHBoxLayout()
+        grid.addWidget(QLabel("Hyperlink Mode:"), 2, 0)
+        
+        # Standard mode checkbox (always available)
+        self.standard_mode_checkbox = QCheckBox("Standard Mode")
+        self.standard_mode_checkbox.setChecked(True)
+        self.standard_mode_checkbox.setToolTip("Standard mode: Add hyperlinks only")
+        hyperlink_layout.addWidget(self.standard_mode_checkbox)
+        
+        # Enhanced mode checkbox
+        self.enhanced_mode_checkbox = QCheckBox("Enhanced Mode")
+        self.enhanced_mode_checkbox.setToolTip("Enhanced mode: Add hyperlinks + update row data with filter information")
+        hyperlink_layout.addWidget(self.enhanced_mode_checkbox)
+        
+        grid.addLayout(hyperlink_layout, 2, 1)
+        
+        # Connect checkboxes to enforce mutual exclusivity
+        self.standard_mode_checkbox.toggled.connect(self._on_standard_mode_toggled)
+        self.enhanced_mode_checkbox.toggled.connect(self._on_enhanced_mode_toggled)
+
         parent_layout.addWidget(frame)
 
     def _add_filter_section(self, parent_layout: QVBoxLayout) -> None:
@@ -510,8 +531,15 @@ class ConfigTab(QWidget):
         # Add the frame to parent layout
         parent_layout.addWidget(frame)
 
-    # This method has been removed as its functionality
-    # is now integrated into the preset section
+    def _on_standard_mode_toggled(self, checked: bool) -> None:
+        """Handle standard mode checkbox toggle - enforce mutual exclusivity."""
+        if checked:
+            self.enhanced_mode_checkbox.setChecked(False)
+
+    def _on_enhanced_mode_toggled(self, checked: bool) -> None:
+        """Handle enhanced mode checkbox toggle - enforce mutual exclusivity."""
+        if checked:
+            self.standard_mode_checkbox.setChecked(False)
 
     def _browse_folder(self, key: str) -> None:
         """Open folder browser dialog."""
@@ -570,6 +598,15 @@ class ConfigTab(QWidget):
             self._on_sheet_changed(curr_sheet)
 
             self.output_template_entry.setText(config.get("output_template", ""))
+            
+            # Load hyperlink mode configuration
+            hyperlink_config = config.get("hyperlink_mode", {})
+            standard_mode = hyperlink_config.get("standard", True)
+            enhanced_mode = hyperlink_config.get("enhanced", False)
+            
+            self.standard_mode_checkbox.setChecked(standard_mode)
+            self.enhanced_mode_checkbox.setChecked(enhanced_mode)
+            
             vision_config = config.get("vision", {})
             self.vision_enabled_checkbox.setChecked(vision_config.get("enabled", False))
             self.vision_api_key_entry.setText(vision_config.get("gemini_api_key", ""))
@@ -717,6 +754,12 @@ class ConfigTab(QWidget):
             # Add filter columns
             config["num_filters"] = self.num_filters_spinbox.value()
             config["filter_columns"] = [combo.currentText() for combo in self.filter_combos]
+
+            # Add hyperlink mode configuration
+            config["hyperlink_mode"] = {
+                "standard": self.standard_mode_checkbox.isChecked(),
+                "enhanced": self.enhanced_mode_checkbox.isChecked(),
+            }
 
             # Get prompt text
             config["prompt"] = self.vision_prompt_text.toPlainText()

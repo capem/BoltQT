@@ -33,6 +33,10 @@ class ConfigManager(QObject):
             "filter_columns": ["", "", "", ""],
             "prompt": "",
             "field_mappings": {},
+            "hyperlink_mode": {
+                "standard": True,
+                "enhanced": False
+            },
             "vision": {
                 "enabled": False,
                 "gemini_api_key": "",

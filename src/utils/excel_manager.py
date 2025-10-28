@@ -553,6 +553,99 @@ class ExcelManager(QObject):
                 logger.error(f"Traceback: {traceback.format_exception(type(e), e, e.__traceback__)}")
             return False
 
+    def update_row_data(
+        self,
+        file_path: str,
+        sheet_name: str,
+        row_idx: int,
+        filter_columns: List[str],
+        filter_values: List[str],
+    ) -> bool:
+        """Update Excel row with filter data in enhanced mode.
+        
+        Args:
+            file_path: Path to the Excel file
+            sheet_name: Name of the sheet
+            row_idx: 0-based row index to update
+            filter_columns: List of filter column names
+            filter_values: List of filter values to update
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            logger = get_logger()
+            logger.debug(f"Updating row {row_idx} with filter data: {dict(zip(filter_columns, filter_values))}")
+
+            # Validate input
+            if len(filter_columns) != len(filter_values):
+                raise ValueError(
+                    f"Number of columns ({len(filter_columns)}) and values ({len(filter_values)}) must match"
+                )
+
+            # Load workbook (with caching for performance)
+            wb, newly_loaded = self._get_cached_workbook(file_path, use_cache=True)
+            ws = wb[sheet_name]
+
+            # Get header row
+            header_row = ws[1]
+            col_indices = {
+                cell.value: idx + 1 for idx, cell in enumerate(header_row)
+            }
+
+            # Verify all filter columns exist
+            for col in filter_columns:
+                if col not in col_indices:
+                    logger.warning(f"Column '{col}' not found in Excel file. Skipping update for this column.")
+                    continue
+
+            # Convert 0-based row index to 1-based Excel row (add 2 for header)
+            excel_row = row_idx + 2
+            
+            # Check if row exists
+            if excel_row > ws.max_row:
+                logger.warning(f"Row {excel_row} does not exist (max row: {ws.max_row})")
+                return False
+
+            # Update the row with filter values
+            updated_columns = []
+            for col, val in zip(filter_columns, filter_values):
+                if col in col_indices:
+                    col_idx = col_indices[col]
+                    cell = ws.cell(row=excel_row, column=col_idx)
+                    
+                    # Get current cell value
+                    current_value = cell.value
+                    
+                    # Only update if the value is different or empty
+                    if current_value != val:
+                        cell.value = val
+                        updated_columns.append(col)
+                        logger.debug(f"Updated column '{col}': '{current_value}' -> '{val}'")
+                    else:
+                        logger.debug(f"No change needed for column '{col}': '{current_value}'")
+
+            # Save workbook
+            wb.save(file_path)
+            logger.debug(f"Excel file saved successfully after row update")
+
+            # Update cached DataFrame if it exists
+            if self.excel_data is not None and row_idx < len(self.excel_data):
+                for col, val in zip(filter_columns, filter_values):
+                    if col in self.excel_data.columns:
+                        self.excel_data.at[row_idx, col] = val
+                logger.debug(f"Updated cached DataFrame for row {row_idx}")
+
+            logger.info(f"Successfully updated row {row_idx} with {len(updated_columns)} columns")
+            return True
+
+        except Exception as e:
+            logger = get_logger()
+            logger.error(f"Error updating row data: {str(e)}")
+            if hasattr(e, "__traceback__"):
+                logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+
     def get_available_sheets(self, file_path: str) -> list[str]:
         """Get list of available sheets in Excel file.
 

@@ -114,37 +114,75 @@ class ProcessingThread(QThread):
                 template_data["processed_folder"] = config["processed_folder"]
                 self._profiler.end_operation("excel_data_operations")
 
-                # Phase 5: Process PDF
+                # Phase 5: Process PDF and handle hyperlink behavior
                 logger.debug("Phase 5: Processing PDF")
                 processed_path = self.pdf_manager.generate_output_path(
                     config["output_template"], template_data
                 )
 
-                # Try to update Excel hyperlink, but continue even if it fails
-                try:
-                    self._profiler.start_operation("excel_hyperlink_update")
-                    filter_column = (
-                        filter_columns[1] if len(filter_columns) > 1 else None
-                    )
-                    logger.debug(f"Updating Excel hyperlink for row {row_idx}")
-                    original_link = self.excel_manager.update_pdf_link(
-                        config["excel_file"],
-                        config["excel_sheet"],
-                        row_idx,
-                        processed_path,
-                        filter_column,
-                    )
-                    self._profiler.end_operation("excel_hyperlink_update")
+                # Check hyperlink mode configuration
+                hyperlink_config = config.get("hyperlink_mode", {})
+                standard_mode = hyperlink_config.get("standard", True)
+                enhanced_mode = hyperlink_config.get("enhanced", False)
 
+                original_link = None
+
+                # Process the PDF based on hyperlink mode
+                try:
+                    if enhanced_mode:
+                        logger.info("Processing in Enhanced mode: Adding hyperlink + updating row data")
+                        # Enhanced mode: Update row data first, then add hyperlink
+                        self._profiler.start_operation("enhanced_hyperlink_mode")
+                        
+                        # Update row data with filter information
+                        self._update_row_with_filter_data(
+                            row_idx, filter_columns, filter_values, task_to_process, config
+                        )
+                        
+                        # Then add hyperlink
+                        filter_column = (
+                            filter_columns[1] if len(filter_columns) > 1 else None
+                        )
+                        logger.debug(f"Updating Excel hyperlink for row {row_idx}")
+                        original_link = self.excel_manager.update_pdf_link(
+                            config["excel_file"],
+                            config["excel_sheet"],
+                            row_idx,
+                            processed_path,
+                            filter_column,
+                        )
+                        
+                        self._profiler.end_operation("enhanced_hyperlink_mode")
+                        
+                    elif standard_mode:
+                        logger.info("Processing in Standard mode: Adding hyperlink only")
+                        # Standard mode: Only add hyperlink (current behavior)
+                        self._profiler.start_operation("standard_hyperlink_mode")
+                        
+                        filter_column = (
+                            filter_columns[1] if len(filter_columns) > 1 else None
+                        )
+                        logger.debug(f"Updating Excel hyperlink for row {row_idx}")
+                        original_link = self.excel_manager.update_pdf_link(
+                            config["excel_file"],
+                            config["excel_sheet"],
+                            row_idx,
+                            processed_path,
+                            filter_column,
+                        )
+                        
+                        self._profiler.end_operation("standard_hyperlink_mode")
+                        
                     # Store task details for potential revert operation
                     task_to_process.row_idx = row_idx
                     task_to_process.original_excel_hyperlink = original_link
                     task_to_process.original_pdf_location = task_to_process.pdf_path
                     task_to_process.processed_pdf_location = processed_path
 
-                    logger.info(f"Updated Excel hyperlink, original: {original_link}")
+                    logger.info(f"Excel hyperlink processing completed, original: {original_link}")
+                    
                 except Exception as e:
-                    logger.warning(f"Excel hyperlink update failed: {str(e)}")
+                    logger.warning(f"Excel hyperlink processing failed: {str(e)}")
 
                 # Process the PDF
                 logger.debug(f"Moving PDF to processed folder: {config['processed_folder']}")
@@ -190,6 +228,48 @@ class ProcessingThread(QThread):
             finally:
                 # Small delay to prevent CPU overuse
                 time.sleep(0.05)
+
+    def _update_row_with_filter_data(
+        self,
+        row_idx: int,
+        filter_columns: List[str],
+        filter_values: List[str],
+        task: PDFTask,
+        config: Dict[str, Any],
+    ) -> None:
+        """Update Excel row with filter data in enhanced mode.
+        
+        Args:
+            row_idx: Excel row index (0-based)
+            filter_columns: List of filter column names
+            filter_values: List of filter values to update
+            task: The current PDF task
+            config: The current configuration
+        """
+        logger = get_logger()
+        try:
+            logger.debug(f"Updating row {row_idx} with filter data in enhanced mode")
+            
+            # Update row data with filter information
+            # This ensures that even if the row was created with incomplete data,
+            # it gets populated with the full filter values
+            self.excel_manager.update_row_data(
+                config["excel_file"],
+                config["excel_sheet"],
+                row_idx,
+                filter_columns,
+                filter_values,
+            )
+            
+            # Refresh the cached Excel data to reflect changes
+            self._excel_data_cache["data"] = self.excel_manager.excel_data
+            
+            logger.info(f"Successfully updated row {row_idx} with filter data")
+            
+        except Exception as e:
+            logger.warning(f"Row data update failed in enhanced mode: {str(e)}")
+            # Don't fail the entire process if row update fails
+            # The hyperlink update should still proceed
 
     def _get_next_pending_task(self):
         """Find the next pending task in the queue."""
@@ -362,7 +442,7 @@ class ProcessingThread(QThread):
                         try:
                             date_obj = datetime.strptime(value, fmt)
                             template_data[f"{column}_date"] = date_obj
-                            get_logger().debug(f"Converted {column} to datetime: {date_obj}")
+                            get_logger().debug(f"Converted {column} to datetime")
                             break
                         except ValueError:
                             continue

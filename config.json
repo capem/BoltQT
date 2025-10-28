@@ -11,13 +11,13 @@
     "num_filters": 6,
     "filter_columns": [
       "FOURNISSEUR",
-      "N° OV",
-      "N° BC",
-      "N° FACTURE",
+      "N\u00b0 OV",
+      "N\u00b0 BC",
+      "N\u00b0 FACTURE",
       "MONTANT ",
       "DATE OV"
     ],
-    "prompt": "Extract the following information from the provided set of documents, which may include a payment order (OV) and its supporting documents:\n1. Supplier/Beneficiary Name: Found on the main payment order.\n2. Payment Order Number (N° OV): Found on the main payment order, usually in the format 'TAREC-OV-YYYY-MM-NNNN'.\n3. Purchase Order Numbers (N° BC): A key field. Look for this number in supporting documents like 'Pièce de dépense (PDD)' or 'Fiche de contrôle interne (FCI)' next to 'BC N°'. This number is often NOT on the main payment order. The number is typically in the format 'YY-MM-NNNN'. Format the final output by prepending 'BC ' to the number, like 'BC 25-07-0001'. If there are multiple numbers separated by a slash (/), format them as a single string separated by semicolons, ensuring each number has the 'BC ' prefix (e.g., 'BC 25-06-0014; BC 25-06-0015'). If the field explicitly says 'Contrat', return the string 'Contrat'. If the field is empty, return null.\n4. Related Invoice Numbers: Found on the main payment order, usually after 'Motif:'. If there are multiple, separate them with semicolons.\n5. Total Amount: The total amount of the payment order, without the currency (e.g., '650,00').\n6. Date of Payment Order (DATE OV): The date on the main payment order document, in DD/MM/YYYY format.\n\nReturn ONLY a JSON object with these fields as keys:\n{\n    \"supplier_name\": \"extracted supplier/beneficiary name\",\n    \"order_number\": \"extracted payment order number\",\n    \"purchase_order_number\": \"extracted and formatted BC numbers, the word 'Contrat', or null\",\n    \"related_invoices\": \"extracted invoice references, semicolon-separated or null\",\n    \"total_amount\": \"extracted amount without currency\",\n    \"payment_date\": \"extracted date of payment order (format DD/MM/YYYY)\"\n}\n\nIf any field is not found, set its value to null.",
+    "prompt": "Extract the following information from the provided set of documents, which may include a payment order (OV) and its supporting documents:\n1. Supplier/Beneficiary Name: Found on the main payment order.\n2. Payment Order Number (N\u00b0 OV): Found on the main payment order, usually in the format 'TAREC-OV-YYYY-MM-NNNN'.\n3. Purchase Order Numbers (N\u00b0 BC): A key field. Look for this number in supporting documents like 'Pi\u00e8ce de d\u00e9pense (PDD)' or 'Fiche de contr\u00f4le interne (FCI)' next to 'BC N\u00b0'. This number is often NOT on the main payment order. The number is typically in the format 'YY-MM-NNNN'. Format the final output by prepending 'BC ' to the number, like 'BC 25-07-0001'. If there are multiple numbers separated by a slash (/), format them as a single string separated by semicolons, ensuring each number has the 'BC ' prefix (e.g., 'BC 25-06-0014; BC 25-06-0015'). If the field explicitly says 'Contrat', return the string 'Contrat'. If the field is empty, return null.\n4. Related Invoice Numbers: Found on the main payment order, usually after 'Motif:'. If there are multiple, separate them with semicolons.\n5. Total Amount: The total amount of the payment order, without the currency (e.g., '650,00').\n6. Date of Payment Order (DATE OV): The date on the main payment order document, in DD/MM/YYYY format.\n\nReturn ONLY a JSON object with these fields as keys:\n{\n    \"supplier_name\": \"extracted supplier/beneficiary name\",\n    \"order_number\": \"extracted payment order number\",\n    \"purchase_order_number\": \"extracted and formatted BC numbers, the word 'Contrat', or null\",\n    \"related_invoices\": \"extracted invoice references, semicolon-separated or null\",\n    \"total_amount\": \"extracted amount without currency\",\n    \"payment_date\": \"extracted date of payment order (format DD/MM/YYYY)\"\n}\n\nIf any field is not found, set its value to null.",
     "field_mappings": {
       "supplier_name": "filter1",
       "order_number": "filter2",
@@ -26,10 +26,14 @@
       "total_amount": "filter5",
       "payment_date": "filter6"
     },
+    "hyperlink_mode": {
+      "standard": false,
+      "enhanced": true
+    },
     "vision": {
       "enabled": true,
       "gemini_api_key": "AIzaSyAE94QUchmv7tzGCNfNkDLkvaJVz3XcOZw",
-      "model": "gemini-2.0-flash",
+      "model": "gemini-2.5-flash",
       "supplier_match_threshold": 0.75,
       "default_language": "fr",
       "ocr_preprocessing": true
