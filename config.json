@@ -92,6 +92,10 @@
       "invoice_date": "filter3",
       "total_amount": "filter4"
     },
+    "hyperlink_mode": {
+      "standard": true,
+      "enhanced": false
+    },
     "vision": {
       "enabled": true,
       "gemini_api_key": "AIzaSyAE94QUchmv7tzGCNfNkDLkvaJVz3XcOZw",

@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from ..utils import ConfigManager, ExcelManager, PDFManager, PDFTask
 from ..utils.logger import get_logger
+from ..utils.path_utils import is_same_path
 from ..utils.performance_profiler import global_profiler
 from ..utils.processing_thread import ProcessingThread
 from ..utils.vision_manager import FuzzyMatcher, VisionManager
@@ -1047,7 +1048,7 @@ class ProcessingTab(QWidget):
             logger.debug(f"Vision preprocessing result ready for {pdf_path}")
 
             # Check if this is still the current PDF
-            if not self.current_pdf or not self.pdf_manager._paths_equal(
+            if not self.current_pdf or not is_same_path(
                 self.current_pdf, pdf_path
             ):
                 logger.warning(
@@ -1263,7 +1264,7 @@ class ProcessingTab(QWidget):
                     # Also track the original location if different
                     paths_to_mark = {task.pdf_path}
 
-                    if task.original_pdf_location and not self.pdf_manager._paths_equal(
+                    if task.original_pdf_location and not is_same_path(
                         task.original_pdf_location, task.pdf_path
                     ):
                         paths_to_mark.add(task.original_pdf_location)
@@ -1280,7 +1281,7 @@ class ProcessingTab(QWidget):
                 if (not self.current_pdf) or (
                     self.current_pdf
                     and task.pdf_path
-                    and self.pdf_manager._paths_equal(self.current_pdf, task.pdf_path)
+                    and is_same_path(self.current_pdf, task.pdf_path)
                 ):
                     logger.debug(
                         f"Loading next PDF after task completion (current PDF is {self.current_pdf})"
@@ -1315,7 +1316,7 @@ class ProcessingTab(QWidget):
             if (
                 self.current_pdf
                 and task.pdf_path
-                and self.pdf_manager._paths_equal(self.current_pdf, task.pdf_path)
+                and is_same_path(self.current_pdf, task.pdf_path)
             ):
                 QTimer.singleShot(1000, self._load_next_pdf)
 

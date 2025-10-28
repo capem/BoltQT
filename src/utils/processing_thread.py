@@ -57,177 +57,116 @@ class ProcessingThread(QThread):
         logger.info("Starting PDF processing thread")
 
         while self.running:
-            # Find next pending task
             task_to_process, task_id = self._get_next_pending_task()
 
-            if not task_to_process:
+            if task_to_process:
+                self._process_task(task_to_process, task_id)
+            else:
                 time.sleep(0.1)
-                continue
 
-            try:
-                logger.info(f"Processing task {task_id}: {task_to_process.pdf_path}")
-                self._profiler.start_operation(f"process_task_{task_id}")
+    def _process_task(self, task: PDFTask, task_id: str) -> None:
+        """Process a single PDF task."""
+        logger = get_logger()
+        logger.info(f"Processing task {task_id}: {task.pdf_path}")
+        self._profiler.start_operation(f"process_task_{task_id}")
 
-                # Phase 1: Setup and validation
-                logger.debug("Phase 1: Setup and validation")
-                self._profiler.start_operation("setup_and_validation")
-                config = self.config_manager.get_config()
-                self._validate_config(config)
-                self._profiler.end_operation("setup_and_validation")
+        try:
+            config = self._prepare_and_validate_config()
+            row_idx, row_data, filter_columns, filter_values = self._get_or_create_excel_row(task, config)
+            task.row_idx = row_idx
 
-                # Phase 2: Load Excel data and find matching row
-                logger.debug("Phase 2: Loading Excel data and finding matching row")
-                self._profiler.start_operation("excel_data_operations")
-                self._ensure_excel_data_loaded(config)
-                df = self._excel_data_cache["data"]
+            template_data = self._create_template_data(row_data, filter_columns, filter_values, row_idx)
+            template_data["processed_folder"] = config["processed_folder"]
 
-                filter_columns = self._get_filter_columns(
-                    config, task_to_process.filter_values
-                )
-                filter_values = task_to_process.filter_values.copy()
+            self._handle_pdf_and_hyperlink(task, config, row_idx, template_data, filter_columns)
 
-                row_idx = self._find_matching_row(
-                    df, filter_columns, filter_values, task_to_process
-                )
-                task_to_process.row_idx = row_idx
+            task.status = "completed"
+            task.end_time = datetime.now()
+            self.task_completed.emit(task_id, "completed")
+            logger.info(f"Task {task_id} completed successfully")
 
-                # Phase 3: Validate row data
-                logger.debug("Phase 3: Validating row data")
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Task processing error: {error_msg}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            if task_id in self.tasks:
+                self.tasks[task_id].status = "failed"
+                self.tasks[task_id].error_msg = error_msg
+                self.tasks[task_id].end_time = datetime.now()
+            self.task_failed.emit(task_id, error_msg)
+            logger.error(f"Task {task_id} failed: {error_msg}")
 
-                # Update our cache with the latest Excel data since we may have added a new row
-                self._excel_data_cache["data"] = self.excel_manager.excel_data
-                df = self._excel_data_cache["data"]
+        finally:
+            self._profiler.end_operation(f"process_task_{task_id}")
+            self.excel_manager.clear_workbook_cache()
+            time.sleep(0.05)
 
-                if row_idx >= len(df):
-                    logger.error(f"Row index {row_idx} out of bounds (df length: {len(df)})")
-                    raise Exception(
-                        f"Row index {row_idx} is out of bounds (df length: {len(df)})"
-                    )
+    def _prepare_and_validate_config(self) -> Dict[str, Any]:
+        """Prepare and validate the configuration for processing."""
+        self._profiler.start_operation("setup_and_validation")
+        config = self.config_manager.get_config()
+        self._validate_config(config)
+        self._profiler.end_operation("setup_and_validation")
+        return config
 
-                row_data = df.iloc[row_idx]
+    def _get_or_create_excel_row(self, task: PDFTask, config: Dict[str, Any]) -> tuple:
+        """Get or create the relevant row in the Excel file."""
+        self._profiler.start_operation("excel_data_operations")
+        self._ensure_excel_data_loaded(config)
+        df = self._excel_data_cache["data"]
 
-                # Phase 4: Create template data
-                logger.debug("Phase 4: Creating template data")
-                template_data = self._create_template_data(
-                    row_data, filter_columns, filter_values, row_idx
-                )
-                template_data["processed_folder"] = config["processed_folder"]
-                self._profiler.end_operation("excel_data_operations")
+        filter_columns = self._get_filter_columns(config, task.filter_values)
+        filter_values = task.filter_values.copy()
 
-                # Phase 5: Process PDF and handle hyperlink behavior
-                logger.debug("Phase 5: Processing PDF")
-                processed_path = self.pdf_manager.generate_output_path(
-                    config["output_template"], template_data
-                )
+        row_idx = self._find_matching_row(df, filter_columns, filter_values, task)
+        
+        # Refresh DataFrame cache if a new row was added
+        if task.created_new_row:
+            self._excel_data_cache["data"] = self.excel_manager.excel_data
+            df = self._excel_data_cache["data"]
 
-                # Check hyperlink mode configuration
-                hyperlink_config = config.get("hyperlink_mode", {})
-                standard_mode = hyperlink_config.get("standard", True)
-                enhanced_mode = hyperlink_config.get("enhanced", False)
+        if row_idx >= len(df):
+            raise IndexError(f"Row index {row_idx} is out of bounds (df length: {len(df)})")
+            
+        row_data = df.iloc[row_idx]
+        self._profiler.end_operation("excel_data_operations")
+        
+        return row_idx, row_data, filter_columns, filter_values
 
-                original_link = None
+    def _handle_pdf_and_hyperlink(self, task: PDFTask, config: Dict[str, Any], row_idx: int, template_data: Dict[str, Any], filter_columns: List[str]) -> None:
+        """Handle PDF processing and Excel hyperlink updates."""
+        processed_path = self.pdf_manager.generate_output_path(config["output_template"], template_data)
+        hyperlink_config = config.get("hyperlink_mode", {})
+        standard_mode = hyperlink_config.get("standard", True)
+        enhanced_mode = hyperlink_config.get("enhanced", False)
+        original_link = None
 
-                # Process the PDF based on hyperlink mode
-                try:
-                    if enhanced_mode:
-                        logger.info("Processing in Enhanced mode: Adding hyperlink + updating row data")
-                        # Enhanced mode: Update row data first, then add hyperlink
-                        self._profiler.start_operation("enhanced_hyperlink_mode")
-                        
-                        # Update row data with filter information
-                        self._update_row_with_filter_data(
-                            row_idx, filter_columns, filter_values, task_to_process, config
-                        )
-                        
-                        # Then add hyperlink
-                        filter_column = (
-                            filter_columns[1] if len(filter_columns) > 1 else None
-                        )
-                        logger.debug(f"Updating Excel hyperlink for row {row_idx}")
-                        original_link = self.excel_manager.update_pdf_link(
-                            config["excel_file"],
-                            config["excel_sheet"],
-                            row_idx,
-                            processed_path,
-                            filter_column,
-                        )
-                        
-                        self._profiler.end_operation("enhanced_hyperlink_mode")
-                        
-                    elif standard_mode:
-                        logger.info("Processing in Standard mode: Adding hyperlink only")
-                        # Standard mode: Only add hyperlink (current behavior)
-                        self._profiler.start_operation("standard_hyperlink_mode")
-                        
-                        filter_column = (
-                            filter_columns[1] if len(filter_columns) > 1 else None
-                        )
-                        logger.debug(f"Updating Excel hyperlink for row {row_idx}")
-                        original_link = self.excel_manager.update_pdf_link(
-                            config["excel_file"],
-                            config["excel_sheet"],
-                            row_idx,
-                            processed_path,
-                            filter_column,
-                        )
-                        
-                        self._profiler.end_operation("standard_hyperlink_mode")
-                        
-                    # Store task details for potential revert operation
-                    task_to_process.row_idx = row_idx
-                    task_to_process.original_excel_hyperlink = original_link
-                    task_to_process.original_pdf_location = task_to_process.pdf_path
-                    task_to_process.processed_pdf_location = processed_path
+        try:
+            if enhanced_mode:
+                self._profiler.start_operation("enhanced_hyperlink_mode")
+                self._update_row_with_filter_data(row_idx, filter_columns, task.filter_values, task, config)
+                filter_column = filter_columns[1] if len(filter_columns) > 1 else None
+                original_link = self.excel_manager.update_pdf_link(config["excel_file"], config["excel_sheet"], row_idx, processed_path, filter_column)
+                self._profiler.end_operation("enhanced_hyperlink_mode")
+            elif standard_mode:
+                self._profiler.start_operation("standard_hyperlink_mode")
+                filter_column = filter_columns[1] if len(filter_columns) > 1 else None
+                original_link = self.excel_manager.update_pdf_link(config["excel_file"], config["excel_sheet"], row_idx, processed_path, filter_column)
+                self._profiler.end_operation("standard_hyperlink_mode")
 
-                    logger.info(f"Excel hyperlink processing completed, original: {original_link}")
-                    
-                except Exception as e:
-                    logger.warning(f"Excel hyperlink processing failed: {str(e)}")
+            task.original_excel_hyperlink = original_link
+            task.processed_pdf_location = processed_path
+            get_logger().info(f"Excel hyperlink processing completed, original: {original_link}")
 
-                # Process the PDF
-                logger.debug(f"Moving PDF to processed folder: {config['processed_folder']}")
-                self.pdf_manager.process_pdf(
-                    task=task_to_process,
-                    template_data=template_data,
-                    processed_folder=config["processed_folder"],
-                    output_template=config["output_template"],
-                )
+        except Exception as e:
+            get_logger().warning(f"Excel hyperlink processing failed: {str(e)}")
 
-                # Update task status and emit completion signal
-                task_to_process.status = "completed"
-                task_to_process.end_time = datetime.now()
-                self._profiler.end_operation(f"process_task_{task_id}")
-
-                # Clear workbook cache to free memory after each task
-                self.excel_manager.clear_workbook_cache()
-
-                self.task_completed.emit(task_id, "completed")
-                logger.info(f"Task {task_id} completed successfully")
-
-            except Exception as e:
-                error_msg = str(e)
-                logger.error(f"Task processing error: {error_msg}")
-
-                # Log traceback for debugging
-                logger.error(f"Traceback: {traceback.format_exc()}")
-
-                # Update task status and emit failure signal
-                if task_id in self.tasks:
-                    self.tasks[task_id].status = "failed"
-                    self.tasks[task_id].error_msg = error_msg
-                    self.tasks[task_id].end_time = datetime.now()
-
-                self._profiler.end_operation(f"process_task_{task_id}")
-
-                # Clear workbook cache to free memory after failed task
-                self.excel_manager.clear_workbook_cache()
-
-                self.task_failed.emit(task_id, error_msg)
-                logger.error(f"Task {task_id} failed: {error_msg}")
-
-            finally:
-                # Small delay to prevent CPU overuse
-                time.sleep(0.05)
+        self.pdf_manager.process_pdf(
+            task=task,
+            template_data=template_data,
+            processed_folder=config["processed_folder"],
+            output_template=config["output_template"],
+        )
 
     def _update_row_with_filter_data(
         self,
