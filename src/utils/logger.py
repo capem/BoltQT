@@ -27,6 +27,7 @@ BACKUP_COUNT = 3  # Keep 3 backup files
 
 # Global logger instance
 _logger = None
+_initialization_lock = False  # Prevent duplicate initialization during import
 
 
 def get_logger(name: str = "BoltQT") -> logging.Logger:
@@ -39,10 +40,14 @@ def get_logger(name: str = "BoltQT") -> logging.Logger:
     Returns:
         The configured logger instance
     """
-    global _logger
+    global _logger, _initialization_lock
     
-    if _logger is None:
-        _logger = setup_logger(name)
+    if _logger is None and not _initialization_lock:
+        _initialization_lock = True
+        try:
+            _logger = setup_logger(name)
+        finally:
+            _initialization_lock = False
     
     return _logger
 
@@ -143,5 +148,5 @@ def update_log_levels(console_level: Optional[int] = None, file_level: Optional[
                 _logger.info(f"File logging level updated to: {logging.getLevelName(file_level)}")
 
 
-# Initialize logger on module import
-get_logger()
+# Remove automatic initialization to prevent duplicate setup
+# Logger will be initialized explicitly in main()

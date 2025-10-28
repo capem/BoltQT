@@ -28,13 +28,15 @@ class VisionManager:
     keeping it separate from the PDF processing workflow.
     """
 
-    def __init__(self, config_manager):
+    def __init__(self, config_manager, excel_manager=None):
         """Initialize the Vision Manager.
 
         Args:
             config_manager: The application configuration manager
+            excel_manager: Optional ExcelManager instance to reuse (avoid duplicate loading)
         """
         self.config_manager = config_manager
+        self.excel_manager = excel_manager  # Reuse existing ExcelManager if provided
         self._vision_parser = None
         self._initialize_vision_service()
 
@@ -48,7 +50,7 @@ class VisionManager:
 
             logger = get_logger()
             if api_key:
-                self._vision_parser = VisionParserService(self.config_manager)
+                self._vision_parser = VisionParserService(self.config_manager, self.excel_manager)
                 logger.debug("Vision preprocessing service initialized")
             else:
                 self._vision_parser = None
@@ -144,15 +146,17 @@ class VisionManager:
 class VisionParserService:
     """Service for extracting information from documents using Google Gemini API for filter preprocessing."""
 
-    def __init__(self, config_manager):
+    def __init__(self, config_manager, excel_manager=None):
         """Initialize the vision preprocessing service with configuration.
 
         Args:
             config_manager: The application configuration manager
+            excel_manager: Optional ExcelManager instance to reuse
         """
         self.config_manager = config_manager
+        self.excel_manager = excel_manager  # Reuse existing ExcelManager if provided
         self._init_gemini_client()
-        self._fuzzy_matcher = FuzzyMatcher(config_manager)
+        self._fuzzy_matcher = FuzzyMatcher(config_manager, excel_manager)
 
         # Load suppliers for fuzzy matching
         config = config_manager.get_config()
@@ -629,13 +633,15 @@ class FuzzyMatcher:
     - Can be extended for other fuzzy matching needs
     """
 
-    def __init__(self, config_manager):
+    def __init__(self, config_manager, excel_manager=None):
         """Initialize the fuzzy matcher with configuration.
 
         Args:
             config_manager: The application configuration manager
+            excel_manager: Optional ExcelManager instance to reuse
         """
         self.config_manager = config_manager
+        self.excel_manager = excel_manager  # Reuse existing ExcelManager if provided
         self.entries = {}  # Dictionary to store different types of entries
         self.threshold = 0.7  # Default threshold
 
@@ -667,10 +673,16 @@ class FuzzyMatcher:
                 logger.debug("Excel configuration not found")
                 return
 
-            excel_manager = ExcelManager()
-
-            # Load Excel data
-            excel_manager.load_excel_data(config["excel_file"], config["excel_sheet"])
+            # Use provided ExcelManager if available, otherwise create new one
+            if self.excel_manager:
+                excel_manager = self.excel_manager
+                logger.debug("Using provided ExcelManager instance")
+            else:
+                excel_manager = ExcelManager()
+                logger.debug("Creating new ExcelManager instance")
+                # Load Excel data
+                excel_manager.load_excel_data(config["excel_file"], config["excel_sheet"])
+            
             if excel_manager.excel_data is None:
                 logger.debug("Failed to load Excel data")
                 return

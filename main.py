@@ -212,66 +212,56 @@ class InitializationThread(QThread):
         logger = get_logger()
 
         try:
-            logger.info("Starting initialization thread")
+            logger.info("Starting optimized initialization thread")
 
-            # Initialize managers in the background thread
+            # Initialize configuration manager first
             self.progress_signal.emit(25, "Initializing configuration manager...")
-            logger.debug("Initializing configuration manager")
             config_manager = ConfigManager()
-            config = config_manager.get_config() # Get config early for paths
-
-            self.progress_signal.emit(35, "Initializing Excel manager...")
-            logger.debug("Initializing Excel manager")
+            config = config_manager.get_config()
+            
+            # Initialize managers efficiently
+            self.progress_signal.emit(30, "Initializing managers...")
             excel_manager = ExcelManager()
+            pdf_manager = PDFManager()
+            vision_manager = VisionManager(config_manager, excel_manager)
 
-            # Initial load of excel data if configured
+            # Load Excel data with single operation
             excel_file = config.get("excel_file")
             excel_sheet = config.get("excel_sheet")
+            excel_loaded = False
+            
             if excel_file and excel_sheet:
                 try:
-                    self.progress_signal.emit(38, "Loading initial Excel data...")
-                    logger.debug(f"Loading initial Excel data from {excel_file}, sheet: {excel_sheet}")
-                    excel_manager.load_excel_data(excel_file, excel_sheet)
-                except Exception as excel_load_err:
-                    logger.warning(f"Initial Excel load failed: {excel_load_err}")
-                    # Don't block initialization, but log the warning
-
-            self.progress_signal.emit(45, "Initializing PDF manager...")
-            logger.debug("Initializing PDF manager")
-            pdf_manager = PDFManager()
-
-            self.progress_signal.emit(48, "Initializing Vision manager...")
-            logger.debug("Initializing Vision manager")
-            vision_manager = VisionManager(config_manager)
-
-            # Preload hyperlinks if Excel data was loaded
-            if excel_manager.excel_data is not None and excel_file and excel_sheet:
-                self.progress_signal.emit(50, "Caching hyperlinks...")
-                logger.debug("Starting hyperlink caching")
-                try:
-                    # Define a callback to update progress (e.g., from 50% to 58%)
-                    def hyperlink_progress(percent: int):
-                        self.progress_signal.emit(50 + int(percent * 0.08), f"Caching hyperlinks ({percent}%)...")
-                        if percent % 25 == 0:  # Log at 0%, 25%, 50%, 75%, 100%
-                            logger.debug(f"Hyperlink caching progress: {percent}%")
-
-                    excel_manager.preload_hyperlinks_async(
-                        excel_file, excel_sheet, progress_callback=hyperlink_progress
+                    self.progress_signal.emit(50, "Loading Excel data...")
+                    
+                    # Single Excel load operation (no redundant loads)
+                    excel_loaded = excel_manager.load_excel_data(
+                        excel_file, excel_sheet, force_reload=False
                     )
-                    self.progress_signal.emit(58, "Hyperlink caching complete.")
-                    logger.debug("Hyperlink caching completed successfully")
-                except Exception as cache_err:
-                    logger.warning(f"Hyperlink caching failed: {cache_err}")
-                    # Log warning, don't block initialization
-                    self.progress_signal.emit(58, "Hyperlink caching failed (continuing).")
-            else:
-                # Skip caching progress if no Excel data
-                logger.debug("Skipping hyperlink caching (no Excel data)")
-                self.progress_signal.emit(58, "Skipping hyperlink caching (no Excel data).")
+                    
+                    if excel_loaded:
+                        self.progress_signal.emit(70, "Caching hyperlinks...")
+                        
+                        # Optimized hyperlink caching with minimal progress updates
+                        def throttled_progress(percent: int):
+                            # Only update at significant milestones to reduce logging overhead
+                            if percent in [0, 25, 50, 75, 100]:
+                                self.progress_signal.emit(
+                                    70 + int(percent * 0.25),
+                                    f"Caching hyperlinks ({percent}%)..."
+                                )
 
-            # Signal that initialization is complete and pass the managers back
-            logger.info("Initialization thread completed successfully")
-            self.progress_signal.emit(59, "Initialization complete!") # Adjusted percentage
+                        excel_manager.preload_hyperlinks_async(
+                            excel_file, excel_sheet, progress_callback=throttled_progress
+                        )
+                        
+                except Exception as excel_err:
+                    logger.warning(f"Excel loading failed: {excel_err}")
+                    excel_loaded = False
+
+            self.progress_signal.emit(95, "Finalizing...")
+            self.progress_signal.emit(100, "Ready!")
+            
             self.finished_signal.emit(config_manager, excel_manager, pdf_manager, vision_manager)
 
         except Exception as e:
@@ -288,11 +278,13 @@ def main() -> int:
     # Application name - define once for consistency
     app_name = "BoltQT"
 
-    # Initialize logger first
-    logger = setup_logger(
-        app_name,
-        log_dir=os.path.join(os.path.expanduser("~"), "BoltQT", "logs")
-    )
+    # Initialize logger first (singleton pattern)
+    logger = get_logger()
+    if not logger.handlers:  # Only setup if not already initialized
+        logger = setup_logger(
+            app_name,
+            log_dir=os.path.join(os.path.expanduser("~"), "BoltQT", "logs")
+        )
     logger.info(f"Starting {app_name} application")
 
     # Create application
