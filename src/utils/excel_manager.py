@@ -134,19 +134,7 @@ class ExcelManager(QObject):
             logger.debug(f"Loading Excel data from {file_path}, sheet: {sheet_name}")
 
             # Try to normalize path for network paths
-            normalized_path = file_path
-            # Handle Windows UNC paths
-            if file_path.startswith("//") or file_path.startswith("\\\\"):
-                try:
-                    # Make sure the path is in a consistent format
-                    parts = file_path.replace("/", "\\").strip("\\").split("\\")
-                    if len(parts) >= 2:
-                        normalized_path = f"\\\\{parts[0]}\\{parts[1]}"
-                        if len(parts) > 2:
-                            normalized_path += "\\" + "\\".join(parts[2:])
-                    logger.debug(f"Normalized network path: {normalized_path}")
-                except Exception as path_err:
-                    logger.warning(f"Path normalization error: {str(path_err)}")
+            normalized_path = normalize_path(file_path)
 
             # Load the data
             try:
@@ -211,17 +199,7 @@ class ExcelManager(QObject):
             self._hyperlink_cache.clear()
 
             # Try to normalize path for network paths
-            normalized_path = file_path
-            if file_path.startswith("//") or file_path.startswith("\\\\"):
-                try:
-                    parts = file_path.replace("/", "\\").strip("\\").split("\\")
-                    if len(parts) >= 2:
-                        normalized_path = f"\\\\{parts[0]}\\{parts[1]}"
-                        if len(parts) > 2:
-                            normalized_path += "\\" + "\\".join(parts[2:])
-                    logger.debug(f"Normalized network path for preloading: {normalized_path}")
-                except Exception as path_err:
-                    logger.warning(f"Path normalization error during preloading: {str(path_err)}")
+            normalized_path = normalize_path(file_path)
 
             try:
                 # Load workbook WITHOUT read_only=True to access hyperlinks

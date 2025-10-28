@@ -30,31 +30,6 @@ class PDFManager:
         # Performance profiler
         self._profiler = PerformanceProfiler()
 
-    def _normalize_path(self, path: str) -> str:
-        """Normalize a path for consistent comparison.
-
-        Args:
-            path: The path to normalize
-
-        Returns:
-            str: The normalized path
-        """
-        # Use the centralized normalize_path function from path_utils
-        return normalize_path(path)
-
-    def _paths_equal(self, path1: str, path2: str) -> bool:
-        """Check if two paths point to the same file.
-
-        Args:
-            path1: First path
-            path2: Second path
-
-        Returns:
-            bool: True if the paths point to the same file
-        """
-        # Use the centralized is_same_path function from path_utils
-        return is_same_path(path1, path2)
-
     def get_next_pdf(
         self, source_folder: str, active_tasks: Dict[str, PDFTask]
     ) -> Optional[str]:
@@ -107,7 +82,7 @@ class PDFManager:
                     # Check if this file is in our processed files list
                     is_processed = False
                     for processed_file in self._processed_files:
-                        if self._paths_equal(full_path, processed_file):
+                        if is_same_path(full_path, processed_file):
                             logger.debug(f"Skipping previously processed file: {file}")
                             is_processed = True
                             skipped_processed += 1
@@ -119,7 +94,7 @@ class PDFManager:
                     # Check if the file is in active tasks
                     in_active_tasks = False
                     for path in active_tasks:
-                        if self._paths_equal(full_path, path):
+                        if is_same_path(full_path, path):
                             in_active_tasks = True
                             skipped_active += 1
                             break
@@ -131,9 +106,9 @@ class PDFManager:
                     is_in_processing = False
                     task_ids_with_path = []
                     for task_id, task in active_tasks.items():
-                        if self._paths_equal(
+                        if is_same_path(
                             full_path, task.pdf_path
-                        ) or self._paths_equal(full_path, task.original_pdf_location):
+                        ) or is_same_path(full_path, task.original_pdf_location):
                             task_ids_with_path.append(task_id)
                             is_in_processing = True
 
@@ -306,7 +281,7 @@ class PDFManager:
         """
         if file_path:
             logger = get_logger()
-            normalized_path = self._normalize_path(file_path)
+            normalized_path = normalize_path(file_path)
             self._processed_files.add(normalized_path)
             logger.debug(
                 f"Marked file as processed (internal tracking): {normalized_path}"
@@ -631,7 +606,7 @@ class PDFManager:
 
 
         # If this is the current tracked file, stop tracking it
-        if self._paths_equal(file_path, self._current_path):
+        if is_same_path(file_path, self._current_path):
             self.close_current_pdf()
 
         logger = get_logger()

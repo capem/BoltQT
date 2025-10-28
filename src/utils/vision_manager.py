@@ -42,13 +42,9 @@ class VisionManager:
         """Initialize the vision parser service."""
         if self.config_manager:
             # Check if API key exists before initializing
-            api_key = os.getenv("GEMINI_API_KEY")
-
-            # If not in environment, try to get from config
-            if not api_key:
-                config = self.config_manager.get_config()
-                vision_config = config.get("vision", {})
-                api_key = vision_config.get("gemini_api_key")
+            config = self.config_manager.get_config()
+            vision_config = config.get("vision", {})
+            api_key = vision_config.get("gemini_api_key") or os.getenv("GEMINI_API_KEY")
 
             logger = get_logger()
             if api_key:
@@ -127,9 +123,7 @@ class VisionManager:
             return False
 
         # Then check if API key exists in environment or config
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            api_key = vision_config.get("gemini_api_key")
+        api_key = vision_config.get("gemini_api_key") or os.getenv("GEMINI_API_KEY")
 
         # Only return true if both enabled and API key exists
         if not api_key:
@@ -190,17 +184,13 @@ class VisionParserService:
     def _init_gemini_client(self) -> None:
         """Initialize the Gemini API client."""
         config = self.config_manager.get_config()
-        api_key = os.getenv("GEMINI_API_KEY")
+        vision_config = config.get("vision", {})
+        api_key = vision_config.get("gemini_api_key") or os.getenv("GEMINI_API_KEY")
 
         logger = get_logger()
         # Check if API key is available
         if not api_key:
-            logger.debug("Gemini API key not found in environment variables")
-            # Try to get from config
-            vision_config = config.get("vision", {})
-            api_key = vision_config.get("gemini_api_key")
-            if not api_key:
-                logger.debug("Gemini API key not found in config")
+            logger.debug("Gemini API key not found in environment variables or config")
 
         if api_key:
             self.client = genai.Client(api_key=api_key)
