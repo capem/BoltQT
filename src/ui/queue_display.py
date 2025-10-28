@@ -4,9 +4,10 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QEvent
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -141,20 +142,39 @@ class QueueDisplay(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().hide()
 
-        # Configure column sizes
+        # Configure column sizes - all interactive for consistent scrolling
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # File
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)  # Status
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)  # Start Time
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)  # End Time
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)  # Duration
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)  # Error
+        
+        # All columns are manually resizeable (interactive)
+        for i in range(6):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
 
+        # Set consistent column sizing for smooth scrolling
         header.setMinimumSectionSize(80)
-        self.table.setColumnWidth(1, 100)  # Status
-        self.table.setColumnWidth(2, 100)  # Start Time
-        self.table.setColumnWidth(3, 100)  # End Time
-        self.table.setColumnWidth(4, 80)  # Duration
+        header.setDefaultSectionSize(120)
+        
+        # Set optimal column widths for balance between usability and scrolling
+        self.table.setColumnWidth(0, 250)  # File (paths)
+        self.table.setColumnWidth(1, 90)   # Status
+        self.table.setColumnWidth(2, 110)  # Start Time
+        self.table.setColumnWidth(3, 110)  # End Time
+        self.table.setColumnWidth(4, 80)   # Duration
+        self.table.setColumnWidth(5, 200)  # Error
+
+        # Optimize table view performance for smooth scrolling
+        self.table.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+        self.table.setVerticalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+        
+        # Set scrollbar policies
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        # Enable smooth scrolling performance optimizations
+        self.table.setWordWrap(False)
+        self.table.setAlternatingRowColors(True)
+        
+        # Set grid color for better visual consistency
+        self.table.setShowGrid(False)
 
         # Add table to layout
         layout.addWidget(self.table)
@@ -177,6 +197,31 @@ class QueueDisplay(QWidget):
         # Set up context menu
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._create_context_menu)
+        
+        # Install event filter for Ctrl+MouseWheel horizontal scrolling
+        self.table.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """Handle Shift+MouseWheel for horizontal scrolling."""
+        if obj == self.table.viewport() and event.type() == QEvent.Type.Wheel:
+            # Check if Shift key is pressed
+            modifiers = QApplication.keyboardModifiers()
+            if modifiers == Qt.KeyboardModifier.ShiftModifier:
+                # Convert vertical wheel event to horizontal scroll
+                wheel_event = event
+                delta = wheel_event.angleDelta().y()
+                
+                # Get horizontal scrollbar
+                h_scrollbar = self.table.horizontalScrollBar()
+                if h_scrollbar:
+                    # Scroll horizontally instead of vertically
+                    scroll_value = h_scrollbar.value() - (delta // 120) * 20  # Adjust multiplier for sensitivity
+                    h_scrollbar.setValue(scroll_value)
+                
+                # Accept the event to prevent default vertical scrolling
+                return True
+        
+        return super().eventFilter(obj, event)
 
     def update_display(self, tasks: Dict[str, PDFTask]) -> None:
         """Update the display with new task data."""
